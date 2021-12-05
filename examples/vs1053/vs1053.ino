@@ -3,7 +3,7 @@
 #include "SPI.h"
 //#include "SD.h"
 //#include "FS.h"
-#include "vs1053_ext.h"
+#include "vs1053.h"
 
 // Digital I/O used
 //#define SD_CS          5
@@ -18,14 +18,14 @@ String ssid =     "Wolles-FRITZBOX";
 String password = "xxxxxxxxxxxxxxxx";
 
 int volume=15;
-
-VS1053 mp3(VS1053_CS, VS1053_DCS, VS1053_DREQ);
+SPIClass spi = SPIClass(VSPI);
+VS1053 mp3(spi, VS1053_CS, VS1053_DCS, VS1053_DREQ);
 
 //The setup function is called once at startup of the sketch
 void setup() {
     //pinMode(SD_CS, OUTPUT);      digitalWrite(SD_CS, HIGH);
     Serial.begin(115200);
-    SPI.begin(SPI_SCK, SPI_MISO, SPI_MOSI);
+    spi.begin(SPI_SCK, SPI_MISO, SPI_MOSI);
     //SD.begin(SD_CS);
     WiFi.disconnect();
     WiFi.mode(WIFI_STA);

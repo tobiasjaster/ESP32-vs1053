@@ -6,8 +6,8 @@
  *      Author: Wolle
  */
 
-#ifndef _vs1053_ext
-#define _vs1053_ext
+#ifndef _vs1053
+#define _vs1053
 
 #include "Arduino.h"
 #include "libb64/cencode.h"
@@ -150,7 +150,9 @@ private:
     const uint8_t SM_TESTS          = 5 ;         	// Bitnumber in SCI_MODE for tests
     const uint8_t SM_LINE1          = 14 ;        	// Bitnumber in SCI_MODE for Line input
 
-    SPISettings     VS1053_SPI;                     // SPI settings for this slave
+    SPISettings     VS1053_SPISettings;                     // SPI settings for this slave
+    SPIClass        *SPIbus         = 0;
+    fs::FS          *FileSystem     = 0;
 
     char            chbuf[512];
     char            m_lastHost[256];                // Store the last URL to a webstream
@@ -212,10 +214,6 @@ protected:
     void     wram_write ( uint16_t address, uint16_t data ) ;
     uint16_t wram_read ( uint16_t address ) ;
     void     showstreamtitle(const char* ml);
-    void     startSong() ;                               // Prepare to start playing. Call this each
-                                                         // time a new song starts.
-    void     stopSong() ;                                // Finish playing a song. Call this after
-                                                         // the last playChunk call.
     void     urlencode(char* buff, uint16_t buffLen, bool spacesOnly = false);
     int      read_MP3_Header(uint8_t *data, size_t len);
     void     showID3Tag(const char* tag, const char* value);
@@ -236,6 +234,8 @@ protected:
 public:
     // Constructor.  Only sets pin values.  Doesn't touch the chip.  Be sure to call begin()!
     VS1053 ( uint8_t _cs_pin, uint8_t _dcs_pin, uint8_t _dreq_pin ) ;
+    VS1053 ( uint8_t _cs_pin, uint8_t _dcs_pin, uint8_t _dreq_pin, SPIClass *_spi_bus ) ;
+    VS1053 ( uint8_t _cs_pin, uint8_t _dcs_pin, uint8_t _dreq_pin, SPIClass *_spi_bus, fs::FS *_file_system) ;
     ~VS1053();
 
     void     begin() ;                                  // Begin operation.  Sets pins correctly,
@@ -247,12 +247,16 @@ public:
     void     printDetails(const char* str);             // Print configuration details to serial output.
     bool     printVersion();                            // Print ID and version of vs1053 chip
     void     softReset() ;                              // Do a soft reset
+    void     startSong() ;                              // Prepare to start playing. Call this each
+                                                        // time a new song starts.
+    void     stopSong() ;                               // Finish playing a song. Call this after
+                                                        // the last playChunk call.
     void 	 loop();
     bool     connecttohost(String host);
     bool     connecttohost(const char* host, const char* user = "", const char* pwd = "");
     bool	 connecttoSD(String sdfile);
     bool     connecttoSD(const char* sdfile);
-    bool     connecttoFS(fs::FS &fs, const char* path);
+    bool     connecttoFS(fs::FS *fs, const char* path);
     bool     connecttospeech(const char* speech, const char* lang);
     uint32_t getFileSize();
     uint32_t getFilePos();

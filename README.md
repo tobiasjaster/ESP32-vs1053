@@ -1,4 +1,4 @@
-# ESP32 vs1053_ext
+# ESP32 vs1053
 With this library You can easily build a MiniWebRadio in Adruino or Eclipse SDK.
 I have found the Originalcode by EdZelf ESP32 Webradio.
 The code is extended with a WiFi-client. This library can play many radiostations up to 320kb/s.

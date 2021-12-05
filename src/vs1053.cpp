@@ -1,12 +1,12 @@
 /*
- *  vs1053_ext.cpp
+ *  vs1053.cpp
  *
  *  Created on: Jul 09.2017
  *  Updated on: Oct 31 2021
  *      Author: Wolle
  */
 
-#include "vs1053_ext.h"
+#include "vs1053.h"
 
 //---------------------------------------------------------------------------------------------------------------------
 AudioBuffer::AudioBuffer(size_t maxBlockSize) {
@@ -139,10 +139,30 @@ uint32_t AudioBuffer::getReadPos() {
 //---------------------------------------------------------------------------------------------------------------------
 VS1053::VS1053(uint8_t _cs_pin, uint8_t _dcs_pin, uint8_t _dreq_pin) :
         cs_pin(_cs_pin), dcs_pin(_dcs_pin), dreq_pin(_dreq_pin)
-{
+{    
+    SPIbus = &SPI;
+    FileSystem = &SD;
     clientsecure.setInsecure();                 // update to ESP32 Arduino version 1.0.5-rc05 or higher
     m_endFillByte=0;
     curvol=50;
+    m_LFcount=0;
+}
+
+VS1053::VS1053(uint8_t _cs_pin, uint8_t _dcs_pin, uint8_t _dreq_pin, SPIClass *_spi_bus ) :
+        cs_pin(_cs_pin), dcs_pin(_dcs_pin), dreq_pin(_dreq_pin), SPIbus(_spi_bus)
+{
+    FileSystem = &SD;
+    m_endFillByte=0;
+    curvol=50;
+    m_t0=0;
+    m_LFcount=0;
+}
+VS1053::VS1053 ( uint8_t _cs_pin, uint8_t _dcs_pin, uint8_t _dreq_pin, SPIClass *_spi_bus, fs::FS *_file_system) :
+        cs_pin(_cs_pin), dcs_pin(_dcs_pin), dreq_pin(_dreq_pin), SPIbus(_spi_bus), FileSystem(_file_system)
+{
+    m_endFillByte=0;
+    curvol=50;
+    m_t0=0;
     m_LFcount=0;
 }
 VS1053::~VS1053(){
@@ -170,17 +190,17 @@ void VS1053::initInBuff() {
 void VS1053::control_mode_off()
 {
     CS_HIGH();                                  // End control mode
-    SPI.endTransaction();                       // Allow other SPI users
+    SPIbus->endTransaction();                       // Allow other SPI users
 }
 void VS1053::control_mode_on()
 {
-    SPI.beginTransaction(VS1053_SPI);           // Prevent other SPI users
+    SPIbus->beginTransaction(VS1053_SPISettings);           // Prevent other SPI users
     DCS_HIGH();                                 // Bring slave in control mode
     CS_LOW();
 }
 void VS1053::data_mode_on()
 {
-    SPI.beginTransaction(VS1053_SPI);           // Prevent other SPI users
+    SPIbus->beginTransaction(VS1053_SPISettings);           // Prevent other SPI users
     CS_HIGH();                                  // Bring slave in data mode
     DCS_LOW();
 }
@@ -188,17 +208,17 @@ void VS1053::data_mode_off()
 {
     //digitalWrite(dcs_pin, HIGH);              // End data mode
     DCS_HIGH();
-    SPI.endTransaction();                       // Allow other SPI users
+    SPIbus->endTransaction();                       // Allow other SPI users
 }
 //---------------------------------------------------------------------------------------------------------------------
 uint16_t VS1053::read_register(uint8_t _reg)
 {
     uint16_t result=0;
     control_mode_on();
-    SPI.write(3);                                           // Read operation
-    SPI.write(_reg);                                        // Register to write (0..0xF)
+    SPIbus->write(3);                                           // Read operation
+    SPIbus->write(_reg);                                        // Register to write (0..0xF)
     // Note: transfer16 does not seem to work
-    result=(SPI.transfer(0xFF) << 8) | (SPI.transfer(0xFF));  // Read 16 bits data
+    result=(SPIbus->transfer(0xFF) << 8) | (SPIbus->transfer(0xFF));  // Read 16 bits data
     await_data_request();                                   // Wait for DREQ to be HIGH again
     control_mode_off();
     return result;
@@ -207,9 +227,9 @@ uint16_t VS1053::read_register(uint8_t _reg)
 void VS1053::write_register(uint8_t _reg, uint16_t _value)
 {
     control_mode_on();
-    SPI.write(2);                                           // Write operation
-    SPI.write(_reg);                                        // Register to write (0..0xF)
-    SPI.write16(_value);                                    // Send 16 bits data
+    SPIbus->write(2);                                           // Write operation
+    SPIbus->write(_reg);                                        // Register to write (0..0xF)
+    SPIbus->write16(_value);                                    // Send 16 bits data
     await_data_request();
     control_mode_off();
 }
@@ -225,7 +245,7 @@ size_t VS1053::sendBytes(uint8_t* data, size_t len){
         if(len > vs1053_chunk_size){
             chunk_length = vs1053_chunk_size;
         }
-        SPI.writeBytes(data, chunk_length);
+        SPIbus->writeBytes(data, chunk_length);
         data         += chunk_length;
         len          -= chunk_length;
         bytesDecoded += chunk_length;
@@ -247,7 +267,7 @@ void VS1053::sdi_send_buffer(uint8_t* data, size_t len)
             chunk_length=vs1053_chunk_size;
         }
         len-=chunk_length;
-        SPI.writeBytes(data, chunk_length);
+        SPIbus->writeBytes(data, chunk_length);
         data+=chunk_length;
     }
     data_mode_off();
@@ -267,7 +287,7 @@ void VS1053::sdi_send_fillers(size_t len){
         }
         len-=chunk_length;
         while(chunk_length--){
-            SPI.write(m_endFillByte);
+            SPIbus->write(m_endFillByte);
         }
     }
     data_mode_off();
@@ -295,7 +315,7 @@ void VS1053::begin(){
     delay(100);
 
     // Init SPI in slow mode (0.2 MHz)
-    VS1053_SPI=SPISettings(200000, MSBFIRST, SPI_MODE0);
+    VS1053_SPISettings=SPISettings(200000, MSBFIRST, SPI_MODE0);
 //    printDetails("Right after reset/startup");
     delay(20);
     // Most VS1053 modules will start up in midi mode.  The result is that there is no audio
@@ -1701,14 +1721,14 @@ void VS1053::UTF8toASCII(char* str){
 }
 //---------------------------------------------------------------------------------------------------------------------
 bool VS1053::connecttoSD(String sdfile){
-    return connecttoFS(SD, sdfile.c_str());
+    return connecttoFS(FileSystem, sdfile.c_str());
 }
 
 bool VS1053::connecttoSD(const char* sdfile){
-    return connecttoFS(SD, sdfile);
+    return connecttoFS(FileSystem, sdfile);
 }
 
-bool VS1053::connecttoFS(fs::FS &fs, const char* path) {
+bool VS1053::connecttoFS(fs::FS *fs, const char* path) {
 
     if(strlen(path)>255) return false;
 
@@ -1728,12 +1748,12 @@ bool VS1053::connecttoFS(fs::FS &fs, const char* path) {
     sprintf(chbuf, "Reading file: \"%s\"", audioName);
     if(vs1053_info) {vTaskDelay(2); vs1053_info(chbuf);}
 
-    if(fs.exists(audioName)) {
-        audiofile = fs.open(audioName);
+    if(fs->exists(audioName)) {
+        audiofile = fs->open(audioName);
     } else {
         UTF8toASCII(audioName);
-        if(fs.exists(audioName)) {
-            audiofile = fs.open(audioName);
+        if(fs->exists(audioName)) {
+            audiofile = fs->open(audioName);
         }
     }
 
