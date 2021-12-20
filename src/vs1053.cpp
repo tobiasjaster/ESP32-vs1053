@@ -119,20 +119,20 @@ uint8_t* AudioBuffer::getReadPtr() {
 return m_readPtr;
 }
 
-void AudioBuffer::resetBuffer() {
-    m_writePtr = m_buffer;
-    m_readPtr = m_buffer;
-    m_endPtr = m_buffer + m_buffSize;
-    m_f_start = true;
-    // memset(m_buffer, 0, m_buffSize); //Clear Inputbuffer
-}
-
 uint32_t AudioBuffer::getWritePos() {
     return m_writePtr - m_buffer;
 }
 
 uint32_t AudioBuffer::getReadPos() {
     return m_readPtr - m_buffer;
+}
+
+void AudioBuffer::resetBuffer() {
+    m_writePtr = m_buffer;
+    m_readPtr = m_buffer;
+    m_endPtr = m_buffer + m_buffSize;
+    m_f_start = true;
+    // memset(m_buffer, 0, m_buffSize); //Clear Inputbuffer
 }
 //---------------------------------------------------------------------------------------------------------------------
 // **** VS1053 Impl ****
@@ -169,142 +169,6 @@ VS1053::~VS1053(){
     // destructor
 }
 //---------------------------------------------------------------------------------------------------------------------
-void VS1053::initInBuff() {
-    static bool f_already_done = false;
-    if(!f_already_done) {
-        size_t size = InBuff.init();
-        if(size == m_buffSizeRAM - m_resBuffSizeRAM) {
-            sprintf(chbuf, "PSRAM not found, inputBufferSize: %u bytes", size - 1);
-            if(vs1053_info)  vs1053_info(chbuf);
-            f_already_done = true;
-        }
-        if(size == m_buffSizePSRAM - m_resBuffSizePSRAM) {
-            sprintf(chbuf, "PSRAM found, inputBufferSize: %u bytes", size - 1);
-            if(vs1053_info) vs1053_info(chbuf);
-            f_already_done = true;
-        }
-    }
-    changeMaxBlockSize(4096);
-}
-//---------------------------------------------------------------------------------------------------------------------
-void VS1053::control_mode_off()
-{
-    CS_HIGH();                                  // End control mode
-    SPIbus->endTransaction();                       // Allow other SPI users
-}
-void VS1053::control_mode_on()
-{
-    SPIbus->beginTransaction(VS1053_SPISettings);           // Prevent other SPI users
-    DCS_HIGH();                                 // Bring slave in control mode
-    CS_LOW();
-}
-void VS1053::data_mode_on()
-{
-    SPIbus->beginTransaction(VS1053_SPISettings);           // Prevent other SPI users
-    CS_HIGH();                                  // Bring slave in data mode
-    DCS_LOW();
-}
-void VS1053::data_mode_off()
-{
-    //digitalWrite(dcs_pin, HIGH);              // End data mode
-    DCS_HIGH();
-    SPIbus->endTransaction();                       // Allow other SPI users
-}
-//---------------------------------------------------------------------------------------------------------------------
-uint16_t VS1053::read_register(uint8_t _reg)
-{
-    uint16_t result=0;
-    control_mode_on();
-    SPIbus->write(3);                                           // Read operation
-    SPIbus->write(_reg);                                        // Register to write (0..0xF)
-    // Note: transfer16 does not seem to work
-    result=(SPIbus->transfer(0xFF) << 8) | (SPIbus->transfer(0xFF));  // Read 16 bits data
-    await_data_request();                                   // Wait for DREQ to be HIGH again
-    control_mode_off();
-    return result;
-}
-//---------------------------------------------------------------------------------------------------------------------
-void VS1053::write_register(uint8_t _reg, uint16_t _value)
-{
-    control_mode_on();
-    SPIbus->write(2);                                           // Write operation
-    SPIbus->write(_reg);                                        // Register to write (0..0xF)
-    SPIbus->write16(_value);                                    // Send 16 bits data
-    await_data_request();
-    control_mode_off();
-}
-//---------------------------------------------------------------------------------------------------------------------
-size_t VS1053::sendBytes(uint8_t* data, size_t len){
-    size_t chunk_length = 0;                                // Length of chunk 32 byte or shorter
-    size_t bytesDecoded = 0;
-
-    data_mode_on();
-    while(len){                                             // More to do?
-        if(!digitalRead(dreq_pin)) break;
-        chunk_length = len;
-        if(len > vs1053_chunk_size){
-            chunk_length = vs1053_chunk_size;
-        }
-        SPIbus->writeBytes(data, chunk_length);
-        data         += chunk_length;
-        len          -= chunk_length;
-        bytesDecoded += chunk_length;
-    }
-    data_mode_off();
-    return bytesDecoded;
-}
-//---------------------------------------------------------------------------------------------------------------------
-void VS1053::sdi_send_buffer(uint8_t* data, size_t len)
-{
-    size_t chunk_length;                                    // Length of chunk 32 byte or shorter
-
-    data_mode_on();
-    while(len){                                             // More to do?
-
-        await_data_request();                               // Wait for space available
-        chunk_length=len;
-        if(len > vs1053_chunk_size){
-            chunk_length=vs1053_chunk_size;
-        }
-        len-=chunk_length;
-        SPIbus->writeBytes(data, chunk_length);
-        data+=chunk_length;
-    }
-    data_mode_off();
-}
-//---------------------------------------------------------------------------------------------------------------------
-void VS1053::sdi_send_fillers(size_t len){
-
-    size_t chunk_length;                                    // Length of chunk 32 byte or shorter
-
-    data_mode_on();
-    while(len)                                              // More to do?
-    {
-        await_data_request();                               // Wait for space available
-        chunk_length=len;
-        if(len > vs1053_chunk_size){
-            chunk_length=vs1053_chunk_size;
-        }
-        len-=chunk_length;
-        while(chunk_length--){
-            SPIbus->write(m_endFillByte);
-        }
-    }
-    data_mode_off();
-}
-//---------------------------------------------------------------------------------------------------------------------
-void VS1053::wram_write(uint16_t address, uint16_t data){
-
-    write_register(SCI_WRAMADDR, address);
-    write_register(SCI_WRAM, data);
-}
-//---------------------------------------------------------------------------------------------------------------------
-uint16_t VS1053::wram_read(uint16_t address){
-
-    write_register(SCI_WRAMADDR, address);                  // Start reading from WRAM
-    return read_register(SCI_WRAM);                         // Read back result
-}
-//---------------------------------------------------------------------------------------------------------------------
 void VS1053::begin(){
 
     pinMode(dreq_pin, INPUT);                               // DREQ is an input
@@ -330,7 +194,7 @@ void VS1053::begin(){
     // The next clocksetting allows SPI clocking at 5 MHz, 4 MHz is safe then.
     write_register(SCI_CLOCKF, 6 << 12);                    // Normal clock settings multiplyer 3.0=12.2 MHz
     //SPI Clock to 4 MHz. Now you can set high speed SPI clock.
-    VS1053_SPI=SPISettings(6700000, MSBFIRST, SPI_MODE0); // SPIDIV 12 -> 80/12=6.66 MHz
+    VS1053_SPISettings=SPISettings(6700000, MSBFIRST, SPI_MODE0); // SPIDIV 12 -> 80/12=6.66 MHz
     write_register(SCI_MODE, _BV (SM_SDINEW) | _BV(SM_LINE1));
     //testComm("Fast SPI, Testing VS1053 read/write registers again... \n");
     delay(10);
@@ -343,48 +207,388 @@ void VS1053::begin(){
     delay(100);
 }
 //---------------------------------------------------------------------------------------------------------------------
-size_t VS1053::bufferFilled(){
-    return InBuff.bufferFilled();
+bool VS1053::connecttohost(String host){
+    return connecttohost(host.c_str());
 }
 //---------------------------------------------------------------------------------------------------------------------
-size_t VS1053::bufferFree(){
-    return InBuff.freeSpace();
-}
-//---------------------------------------------------------------------------------------------------------------------
+bool VS1053::connecttohost(const char* host, const char* user, const char* pwd) {
+    // user and pwd for authentification only, can be empty
 
-void VS1053::setVolume(uint8_t vol){
-    // Set volume.  Both left and right.
-    // Input value is 0..21.  21 is the loudest.
-    // Clicking reduced by using 0xf8 to 0x00 as limits.
-    uint16_t value;                                         // Value to send to SCI_VOL
-
-    if(vol > 21) vol=21;
-
-    if(vol != curvol){
-        curvol = vol;                                       // #20
-        vol=volumetable[vol];                               // Save for later use
-        value=map(vol, 0, 100, 0xF8, 0x00);                 // 0..100% to one channel
-        value=(value << 8) | value;
-        write_register(SCI_VOL, value);                     // Volume left and right
+    if(strlen(host) == 0) {
+        if(vs1053_info) vs1053_info("Hostaddress is empty");
+        return false;
     }
-}
-//---------------------------------------------------------------------------------------------------------------------
-void VS1053::setTone(uint8_t *rtone){                       // Set bass/treble (4 nibbles)
+    setDefaults();
 
-    // Set tone characteristics.  See documentation for the 4 nibbles.
-    uint16_t value=0;                                       // Value to send to SCI_BASS
-    int i;                                                  // Loop control
+    log_d("free heap=%d", ESP.getFreeHeap());
 
-    for(i=0; i < 4; i++)
-            {
-        value=(value << 4) | rtone[i];                      // Shift next nibble in
+    sprintf(chbuf, "Connect to new host: \"%s\"", host);
+    if(vs1053_info) vs1053_info(chbuf);
+
+    // authentification
+    uint8_t auth = strlen(user) + strlen(pwd);
+    char toEncode[auth + 4];
+    toEncode[0] = '\0';
+    strcat(toEncode, user);
+    strcat(toEncode, ":");
+    strcat(toEncode, pwd);
+    char authorization[base64_encode_expected_len(strlen(toEncode)) + 1];
+    authorization[0] = '\0';
+    b64encode((const char*)toEncode, strlen(toEncode), authorization);
+
+    // initializationsequence
+    int16_t pos_slash;                                        // position of "/" in hostname
+    int16_t pos_colon;                                        // position of "/" in hostname
+    int16_t pos_ampersand;                                    // position of "&" in hostname
+    uint16_t port = 80;                                       // port number
+    m_f_webstream = true;
+    setDatamode(VS1053_HEADER);                                // Handle header
+
+    if(startsWith(host, "http://")) {
+        host = host + 7;
+        m_f_ssl = false;
     }
-    write_register(SCI_BASS, value);                        // Volume left and right
+
+    if(startsWith(host, "https://")) {
+        host = host +8;
+        m_f_ssl = true;
+        port = 443;
+    }
+
+    // Is it a playlist?
+    if(endsWith(host, ".m3u")) {m_playlistFormat = FORMAT_M3U; m_datamode = VS1053_PLAYLISTINIT;}
+    if(endsWith(host, ".pls")) {m_playlistFormat = FORMAT_PLS; m_datamode = VS1053_PLAYLISTINIT;}
+    if(endsWith(host, ".asx")) {m_playlistFormat = FORMAT_ASX; m_datamode = VS1053_PLAYLISTINIT;}
+        // if url ...=asx   www.fantasyfoxradio.de/infusions/gr_radiostatus_panel/gr_radiostatus_player.php?id=2&p=asx
+    if(endsWith(host, "=asx")) {m_playlistFormat = FORMAT_ASX; m_datamode = VS1053_PLAYLISTINIT;}
+    if(endsWith(host, "=pls")) {m_playlistFormat = FORMAT_PLS; m_datamode = VS1053_PLAYLISTINIT;}
+
+     // In the URL there may be an extension, like noisefm.ru:8000/play.m3u&t=.m3u
+    pos_slash     = indexOf(host, "/", 0);
+    pos_colon     = indexOf(host, ":", 0);
+    pos_ampersand = indexOf(host, "&", 0);
+
+    char *hostwoext = NULL;                                  // "skonto.ls.lv:8002" in "skonto.ls.lv:8002/mp3"
+    char *extension = NULL;                                  // "/mp3" in "skonto.ls.lv:8002/mp3"
+
+    if(pos_slash > 1) {
+        uint8_t hostwoextLen = pos_slash;
+        hostwoext = (char*)malloc(hostwoextLen + 1);
+        memcpy(hostwoext, host, hostwoextLen);
+        hostwoext[hostwoextLen] = '\0';
+        uint8_t extLen =  urlencode_expected_len(host + pos_slash);
+        extension = (char *)malloc(extLen);
+        memcpy(extension, host  + pos_slash, extLen);
+        trim(extension);
+        urlencode(extension, extLen, true);
+    }
+    else{  // url has no extension
+        hostwoext = strdup(host);
+        extension = strdup("/");
+    }
+
+    if((pos_colon >= 0) && ((pos_ampersand == -1) or (pos_ampersand > pos_colon))){
+        port = atoi(host+ pos_colon + 1);// Get portnumber as integer
+        hostwoext[pos_colon] = '\0';// Host without portnumber
+    }
+
+    sprintf(chbuf, "Connect to \"%s\" on port %d, extension \"%s\"", hostwoext, port, extension);
+    if(vs1053_info) vs1053_info(chbuf);
+
+    char resp[strlen(host) + strlen(authorization) + 100];
+    resp[0] = '\0';
+
+    strcat(resp, "GET ");
+    strcat(resp, extension);
+    strcat(resp, " HTTP/1.1\r\n");
+    strcat(resp, "Host: ");
+    strcat(resp, hostwoext);
+    strcat(resp, "\r\n");
+    strcat(resp, "Icy-MetaData:1\r\n");
+    strcat(resp, "Authorization: Basic ");
+    strcat(resp, authorization);
+    strcat(resp, "\r\n");
+    strcat(resp, "Connection: keep-alive\r\n\r\n");
+
+    const uint32_t TIMEOUT_MS{250};
+    if(m_f_ssl == false) {
+        uint32_t t = millis();
+        if(client.connect(hostwoext, port, TIMEOUT_MS)) {
+            // client.setNoDelay(true);
+            client.print(resp);
+            uint32_t dt = millis() - t;
+            sprintf(chbuf, "Connected to server in %u ms", dt);
+            if(vs1053_info) vs1053_info(chbuf);
+            memcpy(m_lastHost, host, strlen(host) + 1);               // Remember the current s_host
+            trim(m_lastHost);
+            m_f_running = true;
+            if(hostwoext) free(hostwoext);
+            if(extension) free(extension);
+            while(!client.connected()){;} // wait until the connection is established
+            return true;
+        }
+    }
+
+    const uint32_t TIMEOUT_MS_SSL{2700};
+    if(m_f_ssl == true) {
+        uint32_t t = millis();
+        if(clientsecure.connect(hostwoext, port, TIMEOUT_MS_SSL)) {
+            // clientsecure.setNoDelay(true);
+            // if(vs1053_info) vs1053_info("SSL/TLS Connected to server");
+            clientsecure.print(resp);
+            uint32_t dt = millis() - t;
+            sprintf(chbuf, "SSL has been established in %u ms, free Heap: %u bytes", dt, ESP.getFreeHeap());
+            if(vs1053_info) vs1053_info(chbuf);
+            memcpy(m_lastHost, "https://", 8);
+            memcpy(m_lastHost + 8, host, strlen(host) + 1);    // Remember the current s_host
+            m_f_running = true;
+            if(hostwoext) free(hostwoext);
+            if(extension) free(extension);
+            while(!clientsecure.connected()){;}
+            return true;
+        }
+    }
+    sprintf(chbuf, "Request %s failed!", host);
+    if(vs1053_info) vs1053_info(chbuf);
+    if(vs1053_showstation) vs1053_showstation("");
+    if(vs1053_showstreamtitle) vs1053_showstreamtitle("");
+    if(vs1053_icydescription) vs1053_icydescription("");
+    if(vs1053_icyurl) vs1053_icyurl("");
+    m_lastHost[0] = 0;
+    if(hostwoext) free(hostwoext);
+    if(extension) free(extension);
+    return false;
 }
 //---------------------------------------------------------------------------------------------------------------------
-uint8_t VS1053::getVolume()                                 // Get the currenet volume setting.
-{
-    return curvol;
+bool VS1053::connecttoSD(String sdfile){
+    return connecttoFS(FileSystem, sdfile.c_str());
+}
+//---------------------------------------------------------------------------------------------------------------------
+bool VS1053::connecttoSD(const char* sdfile){
+    return connecttoFS(FileSystem, sdfile);
+}
+//---------------------------------------------------------------------------------------------------------------------
+bool VS1053::connecttoFS(fs::FS *fs, const char* path) {
+
+    if(strlen(path)>255) return false;
+
+    char audioName[256];
+
+    setDefaults(); // free buffers an set defaults
+
+    memcpy(audioName, path, strlen(path)+1);
+    if(audioName[0] != '/'){
+        for(int i = 255; i > 0; i--){
+            audioName[i] = audioName[i-1];
+        }
+        audioName[0] = '/';
+    }
+    if(endsWith(audioName, "\n")) audioName[strlen(audioName) -1] = 0;
+
+    sprintf(chbuf, "Reading file: \"%s\"", audioName);
+    if(vs1053_info) {vTaskDelay(2); vs1053_info(chbuf);}
+
+    if(fs->exists(audioName)) {
+        audiofile = fs->open(audioName);
+    } else {
+        UTF8toASCII(audioName);
+        if(fs->exists(audioName)) {
+            audiofile = fs->open(audioName);
+        }
+    }
+
+    if(!audiofile) {
+        if(vs1053_info) {vTaskDelay(2); vs1053_info("Failed to open file for reading");}
+        return false;
+    }
+
+    m_f_localfile = true;
+    m_file_size = audiofile.size();//TEST loop
+
+    char* afn = strdup(audiofile.name());                   // audioFileName
+    uint8_t dotPos = lastIndexOf(afn, ".");
+    for(uint8_t i = dotPos + 1; i < strlen(afn); i++){
+        afn[i] = toLowerCase(afn[i]);
+    }
+
+    if(endsWith(afn, ".mp3")){      // MP3 section
+        m_codec = CODEC_MP3;
+        m_f_running = true;
+        return true;
+    } // end MP3 section
+
+    if(endsWith(afn, ".m4a")){      // M4A section, iTunes
+        m_codec = CODEC_M4A;
+        m_f_running = true;
+        return true;
+    } // end M4A section
+
+    if(endsWith(afn, ".aac")){      // AAC section, without FileHeader
+        m_codec = CODEC_AAC;
+        m_f_running = true;
+        return true;
+    } // end AAC section
+
+    if(endsWith(afn, ".wav")){      // WAVE section
+        m_codec = CODEC_WAV;
+        m_f_running = true;
+        return true;
+    } // end WAVE section
+
+    if(endsWith(afn, ".flac")) {     // FLAC section
+        m_codec = CODEC_FLAC;
+        m_f_running = true;
+        return true;
+    } // end FLAC section
+
+    if(endsWith(afn, ".ogg")) {     // FLAC section
+        m_codec = CODEC_OGG;
+        m_f_running = true;
+        return true;
+    } // end FLAC section
+
+    sprintf(chbuf, "The %s format is not supported", afn + dotPos);
+    if(vs1053_info) vs1053_info(chbuf);
+    audiofile.close();
+    if(afn) free(afn);
+    return false;
+}
+//---------------------------------------------------------------------------------------------------------------------
+bool VS1053::connecttospeech(const char* speech, const char* lang){
+
+    setDefaults();
+    char host[] = "translate.google.com.vn";
+    char path[] = "/translate_tts";
+
+    uint16_t speechLen = strlen(speech);
+    uint16_t speechBuffLen = speechLen + 300;
+    memcpy(m_lastHost, speech, 256);
+    char* speechBuff = (char*)malloc(speechBuffLen);
+    if(!speechBuff) {log_e("out of memory"); return false;}
+    memcpy(speechBuff, speech, speechLen);
+    speechBuff[speechLen] = '\0';
+    urlencode(speechBuff, speechBuffLen);
+
+    char resp[strlen(speechBuff) + 200] = "";
+    strcat(resp, "GET ");
+    strcat(resp, path);
+    strcat(resp, "?ie=UTF-8&tl=");
+    strcat(resp, lang);
+    strcat(resp, "&client=tw-ob&q=");
+    strcat(resp, speechBuff);
+    strcat(resp, " HTTP/1.1\r\n");
+    strcat(resp, "Host: ");
+    strcat(resp, host);
+    strcat(resp, "\r\n");
+    strcat(resp, "User-Agent: Mozilla/5.0 \r\n");
+    strcat(resp, "Accept-Encoding: identity\r\n");
+    strcat(resp, "Accept: text/html\r\n");
+    strcat(resp, "Connection: close\r\n\r\n");
+
+    free(speechBuff);
+
+    if(!clientsecure.connect(host, 443)) {
+        log_e("Connection failed");
+        return false;
+    }
+    clientsecure.print(resp);
+    sprintf(chbuf, "SSL has been established, free Heap: %u bytes", ESP.getFreeHeap());
+    if(vs1053_info) vs1053_info(chbuf);
+
+    m_f_webstream = true;
+    m_f_running = true;
+    m_f_ssl = true;
+    m_f_tts = true;
+    setDatamode(VS1053_HEADER);
+
+    return true;
+}
+//---------------------------------------------------------------------------------------------------------------------
+bool VS1053::setFileLoop(bool input){
+    m_f_loop = input;
+    return input;
+}
+//---------------------------------------------------------------------------------------------------------------------
+bool VS1053::setAudioPlayPosition(uint16_t sec){
+
+    uint32_t filepos = m_audioDataStart + (m_avr_bitrate * sec / 8);
+
+    if(filepos > getFileSize()) filepos = getFileSize();
+    return setFilePos(filepos);
+}
+//---------------------------------------------------------------------------------------------------------------------
+bool VS1053::setFilePos(uint32_t pos){
+    if (!audiofile or doNotJumpSet()) return false;
+    uint8_t volume = getVolume();
+    setVolume(0);
+    if(!(m_codec == CODEC_AAC || m_codec == CODEC_MP3)) {
+        sdi_send_fillers(2052);
+    }
+    bool seek = audiofile.seek(pos);
+    setVolume(volume);
+    return seek;
+}
+//---------------------------------------------------------------------------------------------------------------------
+bool VS1053::audioFileSeek(const float speed) {
+    // 1.0 is normal speed
+    // 2.0 is duble speed
+    if((speed >= 128.0f) || (speed < 1.0f)) return false;
+    uint16_t speed_int = (uint16_t)(speed - floor(speed) > 0.5) ? ceil(speed) : floor(speed);
+    wram_write(WRAM_PLAYSPEED, speed_int);
+    return true;
+}
+//---------------------------------------------------------------------------------------------------------------------
+bool VS1053::setTimeOffset(int sec) {
+
+    uint32_t pos = getFilePos();
+    uint32_t posOffset = (m_avr_bitrate * sec / 8);
+    uint32_t newPos = pos + posOffset;
+    if(newPos < m_audioDataStart) newPos = m_audioDataStart;
+    else if(newPos > getFileSize()) newPos = getFileSize();
+    return setFilePos(newPos);
+}
+//---------------------------------------------------------------------------------------------------------------------
+bool VS1053::pauseResume() {
+    bool retVal = false;
+    if(m_f_localfile || m_f_webstream) {
+        m_f_running = !m_f_running;
+        retVal = true;
+        if(m_f_running) {
+            if(m_f_localfile) {
+                uint32_t pos = audiofile.position();
+                audiofile.seek(0);
+                setFilePos(pos);
+            }
+        }
+        if(!m_f_running) {
+            printf("Bitrate: %u\n", m_avr_bitrate);
+        }
+    }
+    return retVal;
+}
+//---------------------------------------------------------------------------------------------------------------------
+void VS1053::loop(){
+    // - localfile - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    if(m_f_localfile) {                                      // Playing file fron SPIFFS or SD?
+        processLocalFile();
+    }
+    // - webstream - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    if(m_f_webstream) {                                      // Playing file from URL?
+        //if(!m_f_running) return;
+        if(m_datamode == VS1053_PLAYLISTINIT || m_datamode == VS1053_PLAYLISTHEADER || m_datamode == VS1053_PLAYLISTDATA){
+            processPlayListData();
+            return;
+        }
+        if(m_datamode == VS1053_HEADER){
+            processAudioHeaderData();
+            return;
+        }
+        if(m_datamode == VS1053_DATA){
+            processWebStream();
+            return;
+        }
+    }
+    return;
 }
 //----------------------------------------------------------------------------------------------------------------------
 void VS1053::startSong()
@@ -418,14 +622,91 @@ void VS1053::stopSong()
         delay(10);
     }
     if(vs1053_info) vs1053_info("Song stopped incorrectly!");
-    printDetails("after sond stopped incorrectly");
+    printDetails("after song stopped incorrectly");
 }
 //---------------------------------------------------------------------------------------------------------------------
-void VS1053::softReset()
-{
-    write_register(SCI_MODE, _BV (SM_SDINEW) | _BV(SM_RESET));
-    delay(10);
-    await_data_request();
+void VS1053::setVolume(uint8_t vol) {
+    // Set volume.  Both left and right.
+    // Input value is 0..21.  21 is the loudest.
+    // Clicking reduced by using 0xf8 to 0x00 as limits.
+    uint16_t value;                                         // Value to send to SCI_VOL
+
+    if(vol > 21) vol=21;
+
+    if(volumetable[vol] != m_vol){
+        m_vol = volumetable[vol];                              // Save for later use
+        value=map(m_vol, 0, 100, 0xF8, 0x00);                 // 0..100% to one channel
+        value=(value << 8) | value;
+        write_register(SCI_VOL, value);                     // Volume left and right
+    }
+}
+//---------------------------------------------------------------------------------------------------------------------
+uint8_t VS1053::getVolume() {
+    for(uint8_t i = 0; i < 22; i++) {
+        if(volumetable[i] == m_vol) return i;
+    }
+    m_vol = 12; // if m_vol not found in table
+    return m_vol;
+}
+//---------------------------------------------------------------------------------------------------------------------
+void VS1053::stop_mp3client(){
+    int v=read_register(SCI_VOL);
+    audiofile.close();
+    m_f_localfile=false;
+    m_f_webstream=false;
+    write_register(SCI_VOL, 0);                         // Mute while stopping
+
+    client.flush();                                     // Flush stream client
+    client.stop();                                      // Stop stream client
+    write_register(SCI_VOL, v);
+}
+//---------------------------------------------------------------------------------------------------------------------
+uint32_t VS1053::getAudioDataStartPos() {
+    if(!audiofile) return 0;
+    return m_audioDataStart;
+}
+//---------------------------------------------------------------------------------------------------------------------
+uint32_t VS1053::getFileSize(){
+    if (!audiofile) return 0;
+    return audiofile.size();
+}
+//---------------------------------------------------------------------------------------------------------------------
+uint32_t VS1053::getFilePos(){
+    if (!audiofile) return 0;
+    return audiofile.position();
+}
+//---------------------------------------------------------------------------------------------------------------------
+uint32_t VS1053::getBitRate() {
+    return wram_read(WRAM_BYTERATE) * 8;
+}
+//---------------------------------------------------------------------------------------------------------------------
+uint32_t VS1053::getAudioCurrentTime() {
+    return (uint32_t)read_register(SCI_DECODE_TIME);
+}
+//---------------------------------------------------------------------------------------------------------------------
+uint32_t VS1053::getTotalPlayingTime() {
+    return millis() - m_PlayingStartTime;
+}
+//---------------------------------------------------------------------------------------------------------------------
+size_t VS1053::inBufferFilled(){
+    return InBuff.bufferFilled();
+}
+//---------------------------------------------------------------------------------------------------------------------
+size_t VS1053::inBufferFree(){
+    return InBuff.freeSpace();
+}
+//---------------------------------------------------------------------------------------------------------------------
+void VS1053::setTone(uint8_t *rtone){                       // Set bass/treble (4 nibbles)
+
+    // Set tone characteristics.  See documentation for the 4 nibbles.
+    uint16_t value=0;                                       // Value to send to SCI_BASS
+    int i;                                                  // Loop control
+
+    for(i=0; i < 4; i++)
+            {
+        value=(value << 4) | rtone[i];                      // Shift next nibble in
+    }
+    write_register(SCI_BASS, value);                        // Volume left and right
 }
 //---------------------------------------------------------------------------------------------------------------------
 void VS1053::printDetails(const char* str){
@@ -483,90 +764,132 @@ bool VS1053::printVersion(){
     return flag;
 }
 //---------------------------------------------------------------------------------------------------------------------
-void VS1053::showstreamtitle(const char* ml) {
-    // example for ml:
-    // StreamTitle='Oliver Frank - Mega Hitmix';StreamUrl='www.radio-welle-woerthersee.at';
-    // or adw_ad='true';durationMilliseconds='10135';adId='34254';insertionType='preroll';
-
-    int16_t idx1, idx2;
-    uint16_t i = 0, hash = 0;
-    static uint16_t sTit_remember = 0, sUrl_renember = 0;
-
-    idx1 = indexOf(ml, "StreamTitle=", 0);
-    if(idx1 >= 0){                                                              // Streamtitle found
-        idx2 = indexOf(ml, ";", idx1);
-        char *sTit;
-        if(idx2 >= 0){sTit = strndup(ml + idx1, idx2 + 1); sTit[idx2] = '\0';}
-        else          sTit =  strdup(ml);
-
-        while(i < strlen(sTit)){hash += sTit[i] * i+1; i++;}
-
-        if(sTit_remember != hash){
-            sTit_remember = hash;
-            if(vs1053_info) vs1053_info(sTit);
-            uint8_t pos = 12;                                                   // remove "StreamTitle="
-            if(sTit[pos] == '\'') pos++;                                        // remove leading  \'
-            if(sTit[strlen(sTit) - 1] == '\'') sTit[strlen(sTit) -1] = '\0';    // remove trailing \'
-            if(vs1053_showstreamtitle) vs1053_showstreamtitle(sTit + pos);
-        }
-        free(sTit);
-    }
-
-    idx1 = indexOf(ml, "StreamUrl=", 0);
-    idx2 = indexOf(ml, ";", idx1);
-    if(idx1 >= 0 && idx2 > idx1){                                               // StreamURL found
-        uint16_t len = idx2 - idx1;
-        char *sUrl;
-        sUrl = strndup(ml + idx1, len + 1); sUrl[len] = '\0';
-
-        while(i < strlen(sUrl)){hash += sUrl[i] * i+1; i++;}
-        if(sUrl_renember != hash){
-            sUrl_renember = hash;
-            if(vs1053_info) vs1053_info(sUrl);
-        }
-        free(sUrl);
-    }
-
-    idx1 = indexOf(ml, "adw_ad=", 0);
-    if(idx1 >= 0){                                                              // Advertisement found
-        idx1 = indexOf(ml, "durationMilliseconds=", 0);
-        idx2 = indexOf(ml, ";", idx1);
-        if(idx1 >= 0 && idx2 > idx1){
-            uint16_t len = idx2 - idx1;
-            char *sAdv;
-            sAdv = strndup(ml + idx1, len + 1); sAdv[len] = '\0';
-            if(vs1053_info) vs1053_info(sAdv);
-            uint8_t pos = 21;                                                   // remove "StreamTitle="
-            if(sAdv[pos] == '\'') pos++;                                        // remove leading  \'
-            if(sAdv[strlen(sAdv) - 1] == '\'') sAdv[strlen(sAdv) -1] = '\0';    // remove trailing \'
-            if(vs1053_commercial) vs1053_commercial(sAdv + pos);
-            free(sAdv);
-        }
-    }
+void VS1053::softReset()
+{
+    write_register(SCI_MODE, _BV (SM_SDINEW) | _BV(SM_RESET));
+    delay(10);
+    await_data_request();
 }
 //---------------------------------------------------------------------------------------------------------------------
-void VS1053::loop(){
-    // - localfile - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-    if(m_f_localfile) {                                      // Playing file fron SPIFFS or SD?
-        processLocalFile();
+void VS1053::UTF8toASCII(char* str){
+
+    const uint8_t ascii[60] = {
+    //129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148  // UTF8(C3)
+    //                Ä    Å    Æ    Ç         É                                       Ñ                  // CHAR
+      000, 000, 000, 142, 143, 146, 128, 000, 144, 000, 000, 000, 000, 000, 000, 000, 165, 000, 000, 000, // ASCII
+    //149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168
+    //      Ö                             Ü              ß    à                   ä    å    æ         è
+      000, 153, 000, 000, 000, 000, 000, 154, 000, 000, 225, 133, 000, 000, 000, 132, 134, 145, 000, 138,
+    //169, 170, 171, 172. 173. 174. 175, 176, 177, 179, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188
+    //      ê    ë    ì         î    ï         ñ    ò         ô         ö              ù         û    ü
+      000, 136, 137, 141, 000, 140, 139, 000, 164, 149, 000, 147, 000, 148, 000, 000, 151, 000, 150, 129};
+
+    uint16_t i = 0, j=0, s = 0;
+    bool f_C3_seen = false;
+
+    while(str[i] != 0) {                                     // convert UTF8 to ASCII
+        if(str[i] == 195){                                   // C3
+            i++;
+            f_C3_seen = true;
+            continue;
+        }
+        str[j] = str[i];
+        if(str[j] > 128 && str[j] < 189 && f_C3_seen == true) {
+            s = ascii[str[j] - 129];
+            if(s != 0) str[j] = s;                         // found a related ASCII sign
+            f_C3_seen = false;
+        }
+        i++; j++;
     }
-    // - webstream - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-    if(m_f_webstream) {                                      // Playing file from URL?
-        //if(!m_f_running) return;
-        if(m_datamode == VS1053_PLAYLISTINIT || m_datamode == VS1053_PLAYLISTHEADER || m_datamode == VS1053_PLAYLISTDATA){
-            processPlayListData();
-            return;
+    str[j] = 0;
+}
+//---------------------------------------------------------------------------------------------------------------------
+bool VS1053::latinToUTF8(char* buff, size_t bufflen){
+    // most stations send  strings in UTF-8 but a few sends in latin. To standardize this, all latin strings are
+    // converted to UTF-8. If UTF-8 is already present, nothing is done and true is returned.
+    // A conversion to UTF-8 extends the string. Therefore it is necessary to know the buffer size. If the converted
+    // string does not fit into the buffer, false is returned
+    // utf8 bytelength: >=0xF0 3 bytes, >=0xE0 2 bytes, >=0xC0 1 byte, e.g. e293ab is ⓫
+
+    uint16_t pos = 0;
+    uint8_t  ext_bytes = 0;
+    uint16_t len = strlen(buff);
+    uint8_t  c;
+
+    while(pos < len){
+        c = buff[pos];
+        if(c >= 0xC2) {    // is UTF8 char
+            pos++;
+            if(c >= 0xC0 && buff[pos] < 0x80) {ext_bytes++; pos++;}
+            if(c >= 0xE0 && buff[pos] < 0x80) {ext_bytes++; pos++;}
+            if(c >= 0xF0 && buff[pos] < 0x80) {ext_bytes++; pos++;}
         }
-        if(m_datamode == VS1053_HEADER){
-            processAudioHeaderData();
-            return;
+        else pos++;
+    }
+    if(!ext_bytes) return true; // is UTF-8, do nothing
+
+    pos = 0;
+
+    while(buff[pos] != 0){
+        len = strlen(buff);
+        if(buff[pos] >= 0x80 && buff[pos+1] < 0x80){       // is not UTF8, is latin?
+            for(int i = len+1; i > pos; i--){
+                buff[i+1] = buff[i];
+            }
+            uint8_t c = buff[pos];
+            buff[pos++] = 0xc0 | ((c >> 6) & 0x1f);      // 2+1+5 bits
+            buff[pos++] = 0x80 | ((char)c & 0x3f);       // 1+1+6 bits
         }
-        if(m_datamode == VS1053_DATA){
-            processWebStream();
-            return;
+        pos++;
+        if(pos > bufflen -3){
+            buff[bufflen -1] = '\0';
+            return false; // do not overwrite
         }
     }
-    return;
+    return true;
+}
+//---------------------------------------------------------------------------------------------------------------------
+void VS1053::setDefaults(){
+    // initializationsequence
+    stopSong();
+    initInBuff();                                           // initialize InputBuffer if not already done
+    InBuff.resetBuffer();
+    client.stop();
+    client.flush(); // release memory
+    clientsecure.stop();
+    clientsecure.flush();
+    m_f_ctseen=false;                                       // Contents type not seen yet
+    m_metaint=0;                                            // No metaint yet
+    m_LFcount=0;                                            // For detection end of header
+    m_bitrate=0;                                            // Bitrate still unknown
+    m_f_firstCall = true;                                   // InitSequence for processWebstream and processLokalFile
+    m_controlCounter = 0;
+    m_f_firstchunk=true;                                    // First chunk expected
+    m_f_chunked=false;                                      // Assume not chunked
+    m_f_ssl=false;
+    m_f_swm = true;
+    m_f_webfile = false;
+    m_f_webstream = false;
+    m_f_tts = false;                                        // text to speech
+    m_f_localfile = false;
+}
+//---------------------------------------------------------------------------------------------------------------------
+void VS1053::initInBuff() {
+    static bool f_already_done = false;
+    if(!f_already_done) {
+        size_t size = InBuff.init();
+        if(size == m_buffSizeRAM - m_resBuffSizeRAM) {
+            sprintf(chbuf, "PSRAM not found, inputBufferSize: %u bytes", size - 1);
+            if(vs1053_info)  vs1053_info(chbuf);
+            f_already_done = true;
+        }
+        if(size == m_buffSizePSRAM - m_resBuffSizePSRAM) {
+            sprintf(chbuf, "PSRAM found, inputBufferSize: %u bytes", size - 1);
+            if(vs1053_info) vs1053_info(chbuf);
+            f_already_done = true;
+        }
+    }
+    changeMaxBlockSize(4096);
 }
 //---------------------------------------------------------------------------------------------------------------------
 void VS1053::processLocalFile() {
@@ -578,21 +901,36 @@ void VS1053::processLocalFile() {
     uint32_t bytesCanBeRead = 0;
     int32_t bytesAddedToBuffer = 0;
     static bool f_stream;
+    static uint32_t tmr_1s;                                     // timer 1 sec
 
     if(m_f_firstCall) {  // runs only one time per connection, prepare for start
         m_f_firstCall = false;
         f_stream = false;
         return;
     }
+    if(m_jumpToPos > 0) {
+        if(setFilePos(m_jumpToPos)) {
+            m_jumpToPos = 0;
+        }
+    }
+    if((tmr_1s + 1000) < millis()) {
+        compute_bitrate();
+        tmr_1s = millis();
+    }
+    if(m_jumpToTime > 0) {
+        if(setAudioPlayPosition(m_jumpToTime)) {
+            m_jumpToTime = 0;
+        }
+    }
     bytesCanBeWritten = InBuff.writeSpace();
     //----------------------------------------------------------------------------------------------------
     // some files contain further data after the audio block (e.g. pictures).
     // In that case, the end of the audio block is not the end of the file. An 'eof' has to be forced.
     if((m_controlCounter == 100) && (m_contentlength > 0)) { // fileheader was read
-           if(bytesCanBeWritten + getFilePos() >= m_contentlength){
-               if(m_contentlength > getFilePos()) bytesCanBeWritten = m_contentlength - getFilePos();
-               else bytesCanBeWritten = 0;
-           }
+        if(bytesCanBeWritten + getFilePos() >= m_contentlength){
+            if(m_contentlength > getFilePos()) bytesCanBeWritten = m_contentlength - getFilePos();
+            else bytesCanBeWritten = 0;
+        }
     }
     //----------------------------------------------------------------------------------------------------
 
@@ -614,9 +952,9 @@ void VS1053::processLocalFile() {
         }
         if(m_controlCounter != 100){
             if(m_codec == CODEC_WAV){
-            //     int res = read_WAV_Header(InBuff.getReadPtr(), bytesCanBeRead);
-                m_controlCounter = 100;
-            }
+                //     int res = read_WAV_Header(InBuff.getReadPtr(), bytesCanBeRead);
+                    m_controlCounter = 100;
+                }
             if(m_codec == CODEC_MP3){
                 int res = read_MP3_Header(InBuff.getReadPtr(), bytesCanBeRead);
                 if(res >= 0) bytesDecoded = res;
@@ -653,7 +991,12 @@ void VS1053::processLocalFile() {
         else {
             bytesDecoded = sendBytes(InBuff.getReadPtr(), bytesCanBeRead);
         }
-        if(bytesDecoded > 0) {InBuff.bytesWasRead(bytesDecoded);}
+        if(bytesDecoded > 0) {InBuff.bytesWasRead(bytesDecoded); return;}
+//        if(bytesDecoded < 0) {  // no syncword found or decode error, try next chunk
+//            InBuff.bytesWasRead(200); // try next chunk
+//            m_bytesNotDecoded += 200;
+//            return;
+//        }
         return;
     }
     if(!bytesAddedToBuffer) {  // eof
@@ -1116,51 +1459,575 @@ void VS1053::processPlayListData() {
     } // end AUDIO_PLAYLISTDATA
 }
 //---------------------------------------------------------------------------------------------------------------------
-bool VS1053::latinToUTF8(char* buff, size_t bufflen){
-    // most stations send  strings in UTF-8 but a few sends in latin. To standardize this, all latin strings are
-    // converted to UTF-8. If UTF-8 is already present, nothing is done and true is returned.
-    // A conversion to UTF-8 extends the string. Therefore it is necessary to know the buffer size. If the converted
-    // string does not fit into the buffer, false is returned
-    // utf8 bytelength: >=0xF0 3 bytes, >=0xE0 2 bytes, >=0xC0 1 byte, e.g. e293ab is ⓫
+size_t VS1053::sendBytes(uint8_t* data, size_t len){
+    size_t chunk_length = 0;                                // Length of chunk 32 byte or shorter
+    size_t bytesDecoded = 0;
 
-    uint16_t pos = 0;
-    uint8_t  ext_bytes = 0;
-    uint16_t len = strlen(buff);
-    uint8_t  c;
-
-    while(pos < len){
-        c = buff[pos];
-        if(c >= 0xC2) {    // is UTF8 char
-            pos++;
-            if(c >= 0xC0 && buff[pos] < 0x80) {ext_bytes++; pos++;}
-            if(c >= 0xE0 && buff[pos] < 0x80) {ext_bytes++; pos++;}
-            if(c >= 0xF0 && buff[pos] < 0x80) {ext_bytes++; pos++;}
-        }
-        else pos++;
+    if(!m_f_playing) {
+        m_f_playing = true;
+        m_PlayingStartTime = millis();
     }
-    if(!ext_bytes) return true; // is UTF-8, do nothing
 
-    pos = 0;
-
-    while(buff[pos] != 0){
-        len = strlen(buff);
-        if(buff[pos] >= 0x80 && buff[pos+1] < 0x80){       // is not UTF8, is latin?
-            for(int i = len+1; i > pos; i--){
-                buff[i+1] = buff[i];
-            }
-            uint8_t c = buff[pos];
-            buff[pos++] = 0xc0 | ((c >> 6) & 0x1f);      // 2+1+5 bits
-            buff[pos++] = 0x80 | ((char)c & 0x3f);       // 1+1+6 bits
+    data_mode_on();
+    while(len){                                             // More to do?
+        if(!digitalRead(dreq_pin)) break;
+        chunk_length = len;
+        if(len > vs1053_chunk_size){
+            chunk_length = vs1053_chunk_size;
         }
-        pos++;
-        if(pos > bufflen -3){
-            buff[bufflen -1] = '\0';
-            return false; // do not overwrite
-        }
+        SPIbus->writeBytes(data, chunk_length);
+        data         += chunk_length;
+        len          -= chunk_length;
+        bytesDecoded += chunk_length;
     }
-    return true;
+    data_mode_off();
+    return bytesDecoded;
 }
+//---------------------------------------------------------------------------------------------------------------------
+void VS1053::showID3Tag(const char* tag, const char* value){
 
+    chbuf[0] = 0;
+    // V2.2
+    if(!strcmp(tag, "CNT")) sprintf(chbuf, "Play counter: %s", value);
+    // if(!strcmp(tag, "COM")) sprintf(chbuf, "Comments: %s", value);
+    if(!strcmp(tag, "CRA")) sprintf(chbuf, "Audio encryption: %s", value);
+    if(!strcmp(tag, "CRM")) sprintf(chbuf, "Encrypted meta frame: %s", value);
+    if(!strcmp(tag, "ETC")) sprintf(chbuf, "Event timing codes: %s", value);
+    if(!strcmp(tag, "EQU")) sprintf(chbuf, "Equalization: %s", value);
+    if(!strcmp(tag, "IPL")) sprintf(chbuf, "Involved people list: %s", value);
+    if(!strcmp(tag, "PIC")) sprintf(chbuf, "Attached picture: %s", value);
+    if(!strcmp(tag, "SLT")) sprintf(chbuf, "Synchronized lyric/text: %s", value);
+    // if(!strcmp(tag, "TAL")) sprintf(chbuf, "Album/Movie/Show title: %s", value);
+    if(!strcmp(tag, "TBP")) sprintf(chbuf, "BPM (Beats Per Minute): %s", value);
+    if(!strcmp(tag, "TCM")) sprintf(chbuf, "Composer: %s", value);
+    if(!strcmp(tag, "TCO")) sprintf(chbuf, "Content type: %s", value);
+    if(!strcmp(tag, "TCR")) sprintf(chbuf, "Copyright message: %s", value);
+    if(!strcmp(tag, "TDA")) sprintf(chbuf, "Date: %s", value);
+    if(!strcmp(tag, "TDY")) sprintf(chbuf, "Playlist delay: %s", value);
+    if(!strcmp(tag, "TEN")) sprintf(chbuf, "Encoded by: %s", value);
+    if(!strcmp(tag, "TFT")) sprintf(chbuf, "File type: %s", value);
+    if(!strcmp(tag, "TIM")) sprintf(chbuf, "Time: %s", value);
+    if(!strcmp(tag, "TKE")) sprintf(chbuf, "Initial key: %s", value);
+    if(!strcmp(tag, "TLA")) sprintf(chbuf, "Language(s): %s", value);
+    if(!strcmp(tag, "TLE")) sprintf(chbuf, "Length: %s", value);
+    if(!strcmp(tag, "TMT")) sprintf(chbuf, "Media type: %s", value);
+    if(!strcmp(tag, "TOA")) sprintf(chbuf, "Original artist(s)/performer(s): %s", value);
+    if(!strcmp(tag, "TOF")) sprintf(chbuf, "Original filename: %s", value);
+    if(!strcmp(tag, "TOL")) sprintf(chbuf, "Original Lyricist(s)/text writer(s): %s", value);
+    if(!strcmp(tag, "TOR")) sprintf(chbuf, "Original release year: %s", value);
+    if(!strcmp(tag, "TOT")) sprintf(chbuf, "Original album/Movie/Show title: %s", value);
+    if(!strcmp(tag, "TP1")) sprintf(chbuf, "Lead artist(s)/Lead performer(s)/Soloist(s)/Performing group: %s", value);
+    if(!strcmp(tag, "TP2")) sprintf(chbuf, "Band/Orchestra/Accompaniment: %s", value);
+    if(!strcmp(tag, "TP3")) sprintf(chbuf, "Conductor/Performer refinement: %s", value);
+    if(!strcmp(tag, "TP4")) sprintf(chbuf, "Interpreted, remixed, or otherwise modified by: %s", value);
+    if(!strcmp(tag, "TPA")) sprintf(chbuf, "Part of a set: %s", value);
+    if(!strcmp(tag, "TPB")) sprintf(chbuf, "Publisher: %s", value);
+    if(!strcmp(tag, "TRC")) sprintf(chbuf, "ISRC (International Standard Recording Code): %s", value);
+    if(!strcmp(tag, "TRD")) sprintf(chbuf, "Recording dates: %s", value);
+    if(!strcmp(tag, "TRK")) sprintf(chbuf, "Track number/Position in set: %s", value);
+    if(!strcmp(tag, "TSI")) sprintf(chbuf, "Size: %s", value);
+    if(!strcmp(tag, "TSS")) sprintf(chbuf, "Software/hardware and settings used for encoding: %s", value);
+    if(!strcmp(tag, "TT1")) sprintf(chbuf, "Content group description: %s", value);
+    if(!strcmp(tag, "TT2")) sprintf(chbuf, "Title/Songname/Content description: %s", value);
+    if(!strcmp(tag, "TT3")) sprintf(chbuf, "Subtitle/Description refinement: %s", value);
+    if(!strcmp(tag, "TXT")) sprintf(chbuf, "Lyricist/text writer: %s", value);
+    if(!strcmp(tag, "TXX")) sprintf(chbuf, "User defined text information frame: %s", value);
+    if(!strcmp(tag, "TYE")) sprintf(chbuf, "Year: %s", value);
+    if(!strcmp(tag, "UFI")) sprintf(chbuf, "Unique file identifier: %s", value);
+    if(!strcmp(tag, "ULT")) sprintf(chbuf, "Unsychronized lyric/text transcription: %s", value);
+    if(!strcmp(tag, "WAF")) sprintf(chbuf, "Official audio file webpage: %s", value);
+    if(!strcmp(tag, "WAR")) sprintf(chbuf, "Official artist/performer webpage: %s", value);
+    if(!strcmp(tag, "WAS")) sprintf(chbuf, "Official audio source webpage: %s", value);
+    if(!strcmp(tag, "WCM")) sprintf(chbuf, "Commercial information: %s", value);
+    if(!strcmp(tag, "WCP")) sprintf(chbuf, "Copyright/Legal information: %s", value);
+    if(!strcmp(tag, "WPB")) sprintf(chbuf, "Publishers official webpage: %s", value);
+    if(!strcmp(tag, "WXX")) sprintf(chbuf, "User defined URL link frame: %s", value);
+
+    // V2.3 V2.4 tags
+    // if(!strcmp(tag, "COMM")) sprintf(chbuf, "Comment: %s", value);
+    if(!strcmp(tag, "OWNE")) sprintf(chbuf, "Ownership: %s", value);
+    // if(!strcmp(tag, "PRIV")) sprintf(chbuf, "Private: %s", value);
+    if(!strcmp(tag, "SYLT")) sprintf(chbuf, "SynLyrics: %s", value);
+    if(!strcmp(tag, "TALB")) sprintf(chbuf, "Album: %s", value);
+    if(!strcmp(tag, "TBPM")) sprintf(chbuf, "BeatsPerMinute: %s", value);
+    if(!strcmp(tag, "TCMP")) sprintf(chbuf, "Compilation: %s", value);
+    if(!strcmp(tag, "TCOM")) sprintf(chbuf, "Composer: %s", value);
+    if(!strcmp(tag, "TCON")) sprintf(chbuf, "ContentType: %s", value);
+    if(!strcmp(tag, "TCOP")) sprintf(chbuf, "Copyright: %s", value);
+    if(!strcmp(tag, "TDAT")) sprintf(chbuf, "Date: %s", value);
+    if(!strcmp(tag, "TEXT")) sprintf(chbuf, "Lyricist: %s", value);
+    if(!strcmp(tag, "TIME")) sprintf(chbuf, "Time: %s", value);
+    if(!strcmp(tag, "TIT1")) sprintf(chbuf, "Grouping: %s", value);
+    if(!strcmp(tag, "TIT2")) sprintf(chbuf, "Title: %s", value);
+    if(!strcmp(tag, "TIT3")) sprintf(chbuf, "Subtitle: %s", value);
+    if(!strcmp(tag, "TLAN")) sprintf(chbuf, "Language: %s", value);
+    if(!strcmp(tag, "TLEN")) sprintf(chbuf, "Length (ms): %s", value);
+    if(!strcmp(tag, "TMED")) sprintf(chbuf, "Media: %s", value);
+    if(!strcmp(tag, "TOAL")) sprintf(chbuf, "OriginalAlbum: %s", value);
+    if(!strcmp(tag, "TOPE")) sprintf(chbuf, "OriginalArtist: %s", value);
+    if(!strcmp(tag, "TORY")) sprintf(chbuf, "OriginalReleaseYear: %s", value);
+    if(!strcmp(tag, "TPE1")) sprintf(chbuf, "Artist: %s", value);
+    if(!strcmp(tag, "TPE2")) sprintf(chbuf, "Band: %s", value);
+    if(!strcmp(tag, "TPE3")) sprintf(chbuf, "Conductor: %s", value);
+    if(!strcmp(tag, "TPE4")) sprintf(chbuf, "InterpretedBy: %s", value);
+    if(!strcmp(tag, "TPOS")) sprintf(chbuf, "PartOfSet: %s", value);
+    if(!strcmp(tag, "TPUB")) sprintf(chbuf, "Publisher: %s", value);
+    if(!strcmp(tag, "TRCK")) sprintf(chbuf, "Track: %s", value);
+    if(!strcmp(tag, "TSSE")) sprintf(chbuf, "SettingsForEncoding: %s", value);
+    if(!strcmp(tag, "TRDA")) sprintf(chbuf, "RecordingDates: %s", value);
+    if(!strcmp(tag, "TXXX")) sprintf(chbuf, "UserDefinedText: %s", value);
+    if(!strcmp(tag, "TYER")) sprintf(chbuf, "Year: %s", value);
+    if(!strcmp(tag, "USER")) sprintf(chbuf, "TermsOfUse: %s", value);
+    if(!strcmp(tag, "USLT")) sprintf(chbuf, "Lyrics: %s", value);
+    if(!strcmp(tag, "WOAR")) sprintf(chbuf, "OfficialArtistWebpage: %s", value);
+    if(!strcmp(tag, "XDOR")) sprintf(chbuf, "OriginalReleaseTime: %s", value);
+
+    latinToUTF8(chbuf, sizeof(chbuf));
+    if(chbuf[0] != 0) if(vs1053_id3data) vs1053_id3data(chbuf);
+}
+//---------------------------------------------------------------------------------------------------------------------
+void VS1053::unicode2utf8(char* buff, uint32_t len){
+    // converts unicode in UTF-8, buff contains the string to be converted up to len
+    // range U+1 ... U+FFFF
+    uint8_t* tmpbuff = (uint8_t*)malloc(len * 2);
+    if(!tmpbuff) {log_e("out of memory"); return;}
+    bool bitorder = false;
+    uint16_t j = 0;
+    uint16_t k = 0;
+    uint16_t m = 0;
+    uint8_t uni_h = 0;
+    uint8_t uni_l = 0;
+
+    while(m < len - 1) {
+        if((buff[m] == 0xFE) && (buff[m + 1] == 0xFF)) {
+            bitorder = true;
+            j = m + 2;
+        }  // LSB/MSB
+        if((buff[m] == 0xFF) && (buff[m + 1] == 0xFE)) {
+            bitorder = false;
+            j = m + 2;
+        }  // MSB/LSB
+        m++;
+    } // seek for last bitorder
+    m = 0;
+    if(j > 0) {
+        for(k = j; k < len; k += 2) {
+            if(bitorder == true) {
+                uni_h = (uint8_t)buff[k];
+                uni_l = (uint8_t)buff[k + 1];
+            }
+            else {
+                uni_l = (uint8_t)buff[k];
+                uni_h = (uint8_t)buff[k + 1];
+            }
+
+            uint16_t uni_hl = ((uni_h << 8) | uni_l);
+
+            if (uni_hl < 0X80){
+                tmpbuff[m] = uni_l;
+                m++;
+            }
+            else if (uni_hl < 0X800) {
+                tmpbuff[m]= ((uni_hl >> 6) | 0XC0);
+                m++;
+                tmpbuff[m] =((uni_hl & 0X3F) | 0X80);
+                m++;
+            }
+            else {
+                tmpbuff[m] = ((uni_hl >> 12) | 0XE0);
+                m++;
+                tmpbuff[m] = (((uni_hl >> 6) & 0X3F) | 0X80);
+                m++;
+                tmpbuff[m] = ((uni_hl & 0X3F) | 0X80);
+                m++;
+            }
+        }
+    }
+    buff[m] = 0;
+    memcpy(buff, tmpbuff, m);
+    free(tmpbuff);
+}
+//---------------------------------------------------------------------------------------------------------------------
+int VS1053::read_MP3_Header(uint8_t *data, size_t len) {
+
+    static size_t headerSize;
+    static size_t id3Size;
+    static uint8_t ID3version;
+    static int ehsz = 0;
+    static char tag[5];
+    static char frameid[5];
+    static size_t framesize = 0;
+    static bool compressed = false;
+    static bool APIC_seen = false;
+    static size_t APIC_size = 0;
+    static uint32_t APIC_pos = 0;
+    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    if(m_controlCounter == 0){      /* read ID3 tag and ID3 header size */
+        if(m_f_localfile){
+            m_contentlength = getFileSize();
+            ID3version = 0;
+            sprintf(chbuf, "Content-Length: %u", m_contentlength);
+            if(vs1053_info) vs1053_info(chbuf);
+        }
+        m_controlCounter ++;
+        APIC_seen = false;
+        headerSize = 0;
+        ehsz = 0;
+        if(specialIndexOf(data, "ID3", 4) != 0) { // ID3 not found
+            if(vs1053_info) vs1053_info("file has no mp3 tag, skip metadata");
+            m_audioDataSize = m_contentlength;
+            sprintf(chbuf, "Audio-Length: %u", m_audioDataSize);
+            if(vs1053_info) vs1053_info(chbuf);
+            return -1; // error, no ID3 signature found
+        }
+        ID3version = *(data + 3);
+        switch(ID3version){
+            case 2:
+                m_f_unsync = (*(data + 5) & 0x80);
+                m_f_exthdr = false;
+                break;
+            case 3:
+            case 4:
+                m_f_unsync = (*(data + 5) & 0x80); // bit7
+                m_f_exthdr = (*(data + 5) & 0x40); // bit6 extended header
+                break;
+        };
+        id3Size = bigEndian(data + 6, 4, 7); //  ID3v2 size  4 * %0xxxxxxx (shift left seven times!!)
+        id3Size += 10;
+
+        // Every read from now may be unsync'd
+        sprintf(chbuf, "ID3 framesSize: %i", id3Size);
+        if(vs1053_info) vs1053_info(chbuf);
+
+        sprintf(chbuf, "ID3 version: 2.%i", ID3version);
+        if(vs1053_info) vs1053_info(chbuf);
+
+        if(ID3version == 2){
+            m_controlCounter = 10;
+        }
+        headerSize = id3Size;
+        headerSize -= 10;
+
+        return 10;
+    }
+    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    if(m_controlCounter == 1){      // compute extended header size if exists
+        m_controlCounter ++;
+        if(m_f_exthdr) {
+            if(vs1053_info) vs1053_info("ID3 extended header");
+            ehsz =  bigEndian(data, 4);
+            headerSize -= 4;
+            ehsz -= 4;
+            return 4;
+        }
+        else{
+            if(vs1053_info) vs1053_info("ID3 normal frames");
+            return 0;
+        }
+    }
+    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    if(m_controlCounter == 2){      // skip extended header if exists
+        if(ehsz > 256) {
+            ehsz -=256;
+            headerSize -= 256;
+            return 256;} // Throw it away
+        else           {
+            m_controlCounter ++;
+            headerSize -= ehsz;
+            return ehsz;} // Throw it away
+    }
+    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    if(m_controlCounter == 3){      // read a ID3 frame, get the tag
+        if(headerSize == 0){
+            m_controlCounter = 99;
+            return 0;
+        }
+        m_controlCounter ++;
+        frameid[0] = *(data + 0);
+        frameid[1] = *(data + 1);
+        frameid[2] = *(data + 2);
+        frameid[3] = *(data + 3);
+        frameid[4] = 0;
+        for(uint8_t i = 0; i < 4; i++) tag[i] = frameid[i]; // tag = frameid
+
+        headerSize -= 4;
+        if(frameid[0] == 0 && frameid[1] == 0 && frameid[2] == 0 && frameid[3] == 0) {
+            // We're in padding
+            m_controlCounter = 98;  // all ID3 metadata processed
+        }
+        return 4;
+    }
+    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    if(m_controlCounter == 4){  // get the frame size
+        m_controlCounter = 6;
+
+        if(ID3version == 4){
+            framesize = bigEndian(data, 4, 7); // << 7
+        }
+        else {
+            framesize = bigEndian(data, 4);  // << 8
+        }
+        headerSize -= 4;
+        uint8_t flag = *(data + 4); // skip 1st flag
+        (void) flag;
+        headerSize--;
+        compressed = (*(data + 5)) & 0x80; // Frame is compressed using [#ZLIB zlib] with 4 bytes for 'decompressed
+                                           // size' appended to the frame header.
+        headerSize--;
+        uint32_t decompsize = 0;
+        if(compressed){
+            log_d("iscompressed");
+            decompsize = bigEndian(data + 6, 4);
+            headerSize -= 4;
+            (void) decompsize;
+            log_d("decompsize=%u", decompsize);
+            return 6 + 4;
+        }
+        return 6;
+    }
+    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    if(m_controlCounter == 5){      // If the frame is larger than 256 bytes, skip the rest
+        if(framesize > 256){
+            framesize -= 256;
+            headerSize -= 256;
+            return 256;
+        }
+        else {
+            m_controlCounter = 3; // check next frame
+            headerSize -= framesize;
+            return framesize;
+        }
+    }
+    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    if(m_controlCounter == 6){      // Read the value
+        m_controlCounter = 5;       // only read 256 bytes
+        char value[256];
+        char ch = *(data + 0);
+        bool isUnicode = (ch==1) ? true : false;
+
+        if(startsWith(frameid, "APIC")) { // a image embedded in file, passing it to external function
+            // log_d("framesize=%i", framesize);
+            isUnicode = false;
+            if(m_f_localfile){
+                APIC_seen = true;
+                APIC_pos = id3Size - headerSize;
+                APIC_size = framesize;
+            }
+            return 0;
+        }
+
+        size_t fs = framesize;
+        if(fs >255) fs = 255;
+        for(int i=0; i<fs; i++){
+            value[i] = *(data + i);
+        }
+        framesize -= fs;
+        headerSize -= fs;
+        value[fs] = 0;
+        if(isUnicode && fs > 1) {
+            unicode2utf8(value, fs);   // convert unicode to utf-8 U+0020...U+07FF
+        }
+        if(!isUnicode){
+            uint16_t j = 0, k = 0;
+            j = 0;
+            k = 0;
+            while(j < fs) {
+                if(value[j] == 0x0A) value[j] = 0x20; // replace LF by space
+                if(value[j] > 0x1F) {
+                    value[k] = value[j];
+                    k++;
+                }
+                j++;
+            } //remove non printables
+            if(k>0) value[k] = 0; else value[0] = 0; // new termination
+        }
+        showID3Tag(frameid, value);
+        return fs;
+    }
+    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+    // -- section V2.2 only , greater Vers above ----
+    if(m_controlCounter == 10){ // frames in V2.2, 3bytes identifier, 3bytes size descriptor
+        frameid[0] = *(data + 0);
+        frameid[1] = *(data + 1);
+        frameid[2] = *(data + 2);
+        frameid[3] = 0;
+        headerSize -= 3;
+        size_t len = bigEndian(data + 3, 3);
+        headerSize -= 3;
+        headerSize -= len;
+        char value[256];
+        size_t tmp = len;
+        if(tmp > 254) tmp = 254;
+        memcpy(value, (data + 7), tmp);
+        value[tmp+1] = 0;
+        chbuf[0] = 0;
+
+        showID3Tag(frameid, value);
+        if(len == 0) m_controlCounter = 98;
+
+        return 3 + 3 + len;
+    }
+    // -- end section V2.2 -----------
+
+    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    if(m_controlCounter == 98){ // skip all ID3 metadata (mostly spaces)
+        if(headerSize > 256) {
+            headerSize -=256;
+            return 256;
+        } // Throw it away
+        else           {
+            m_controlCounter = 99;
+            return headerSize;
+        } // Throw it away
+    }
+    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+    if(m_controlCounter == 99){ //  exist another ID3tag?
+        m_audioDataStart += id3Size;
+        vTaskDelay(30);
+        if((*(data + 0) == 'I') && (*(data + 1) == 'D') && (*(data + 2) == '3')) {
+            m_controlCounter = 0;
+            return 0;
+        }
+        else {
+            m_controlCounter = 100; // ok
+            m_audioDataSize = m_contentlength - m_audioDataStart;
+            sprintf(chbuf, "Audio-Length: %u", m_audioDataSize);
+            if(vs1053_info) vs1053_info(chbuf);
+            if(APIC_seen && vs1053_id3image){
+                size_t pos = audiofile.position();
+                vs1053_id3image(audiofile, APIC_pos, APIC_size);
+                audiofile.seek(pos); // the filepointer could have been changed by the user, set it back
+            }
+            return 0;
+        }
+    }
+    return 0;
+}
+//---------------------------------------------------------------------------------------------------------------------
+void VS1053::showstreamtitle(const char* ml) {
+    // example for ml:
+    // StreamTitle='Oliver Frank - Mega Hitmix';StreamUrl='www.radio-welle-woerthersee.at';
+    // or adw_ad='true';durationMilliseconds='10135';adId='34254';insertionType='preroll';
+
+    int16_t idx1, idx2;
+    uint16_t i = 0, hash = 0;
+    static uint16_t sTit_remember = 0, sUrl_renember = 0;
+
+    idx1 = indexOf(ml, "StreamTitle=", 0);
+    if(idx1 >= 0){                                                              // Streamtitle found
+        idx2 = indexOf(ml, ";", idx1);
+        char *sTit;
+        if(idx2 >= 0){sTit = strndup(ml + idx1, idx2 + 1); sTit[idx2] = '\0';}
+        else          sTit =  strdup(ml);
+
+        while(i < strlen(sTit)){hash += sTit[i] * i+1; i++;}
+
+        if(sTit_remember != hash){
+            sTit_remember = hash;
+            if(vs1053_info) vs1053_info(sTit);
+            uint8_t pos = 12;                                                   // remove "StreamTitle="
+            if(sTit[pos] == '\'') pos++;                                        // remove leading  \'
+            if(sTit[strlen(sTit) - 1] == '\'') sTit[strlen(sTit) -1] = '\0';    // remove trailing \'
+            if(vs1053_showstreamtitle) vs1053_showstreamtitle(sTit + pos);
+        }
+        free(sTit);
+    }
+
+    idx1 = indexOf(ml, "StreamUrl=", 0);
+    idx2 = indexOf(ml, ";", idx1);
+    if(idx1 >= 0 && idx2 > idx1){                                               // StreamURL found
+        uint16_t len = idx2 - idx1;
+        char *sUrl;
+        sUrl = strndup(ml + idx1, len + 1); sUrl[len] = '\0';
+
+        while(i < strlen(sUrl)){hash += sUrl[i] * i+1; i++;}
+        if(sUrl_renember != hash){
+            sUrl_renember = hash;
+            if(vs1053_info) vs1053_info(sUrl);
+        }
+        free(sUrl);
+    }
+
+    idx1 = indexOf(ml, "adw_ad=", 0);
+    if(idx1 >= 0){                                                              // Advertisement found
+        idx1 = indexOf(ml, "durationMilliseconds=", 0);
+        idx2 = indexOf(ml, ";", idx1);
+        if(idx1 >= 0 && idx2 > idx1){
+            uint16_t len = idx2 - idx1;
+            char *sAdv;
+            sAdv = strndup(ml + idx1, len + 1); sAdv[len] = '\0';
+            if(vs1053_info) vs1053_info(sAdv);
+            uint8_t pos = 21;                                                   // remove "StreamTitle="
+            if(sAdv[pos] == '\'') pos++;                                        // remove leading  \'
+            if(sAdv[strlen(sAdv) - 1] == '\'') sAdv[strlen(sAdv) -1] = '\0';    // remove trailing \'
+            if(vs1053_commercial) vs1053_commercial(sAdv + pos);
+            free(sAdv);
+        }
+    }
+}
+//---------------------------------------------------------------------------------------------------------------------
+bool VS1053::parseContentType(const char* ct) {
+    bool ct_seen = false;
+    if(indexOf(ct, "audio", 0) >= 0) {        // Is ct audio?
+        ct_seen = true;                       // Yes, remember seeing this
+        if(indexOf(ct, "mpeg", 13) >= 0) {
+            m_codec = CODEC_MP3;
+            sprintf(chbuf, "%s, format is mp3", ct);
+            if(vs1053_info) vs1053_info(chbuf); //ok is likely mp3
+        }
+        else if(indexOf(ct, "mp3", 13) >= 0) {
+            m_codec = CODEC_MP3;
+            sprintf(chbuf, "%s, format is mp3", ct);
+            if(vs1053_info) vs1053_info(chbuf);
+        }
+        else if(indexOf(ct, "aac", 13) >= 0) {
+            m_codec = CODEC_AAC;
+            sprintf(chbuf, "%s, format is aac", ct);
+            if(vs1053_info) vs1053_info(chbuf);
+        }
+        else if(indexOf(ct, "mp4", 13) >= 0) {      // audio/mp4a, audio/mp4a-latm
+            m_codec = CODEC_M4A;
+            sprintf(chbuf, "%s, format is aac", ct);
+            if(vs1053_info) vs1053_info(chbuf);
+        }
+        else if(indexOf(ct, "m4a", 13) >= 0) {      // audio/x-m4a
+            m_codec = CODEC_M4A;
+            sprintf(chbuf, "%s, format is aac", ct);
+            if(vs1053_info) vs1053_info(chbuf);
+        }
+        else if(indexOf(ct, "wav", 13) >= 0) {      // audio/x-wav
+            m_codec = CODEC_WAV;
+            sprintf(chbuf, "%s, format is wav", ct);
+            if(vs1053_info) vs1053_info(chbuf);
+        }
+        else if(indexOf(ct, "ogg", 13) >= 0) {
+            m_codec = CODEC_OGG;
+            sprintf(chbuf, "ContentType %s found", ct);
+            if(vs1053_info) vs1053_info(chbuf);
+        }
+        else if(indexOf(ct, "flac", 13) >= 0) {     // audio/flac, audio/x-flac
+            m_codec = CODEC_FLAC;
+            sprintf(chbuf, "%s, format is flac", ct);
+            if(vs1053_info) vs1053_info(chbuf);
+        }
+        else {
+            m_f_running = false;
+            sprintf(chbuf, "%s, unsupported audio format", ct);
+            if(vs1053_info) vs1053_info(chbuf);
+        }
+    }
+    if(indexOf(ct, "application", 0) >= 0) {  // Is ct application?
+        ct_seen = true;                       // Yes, remember seeing this
+        uint8_t pos = indexOf(ct, "application", 0);
+        if(indexOf(ct, "ogg", 13) >= 0) {
+            m_codec = CODEC_OGG;
+            sprintf(chbuf, "ContentType %s found", ct + pos);
+            if(vs1053_info) vs1053_info(chbuf);
+        }
+    }
+    return ct_seen;
+}
 //---------------------------------------------------------------------------------------------------------------------
 void VS1053::processAudioHeaderData() {
 
@@ -1362,6 +2229,145 @@ void VS1053::processAudioHeaderData() {
     return;
 }
 //---------------------------------------------------------------------------------------------------------------------
+void VS1053::urlencode(char* buff, uint16_t buffLen, bool spacesOnly){
+    uint16_t len = strlen(buff);
+    uint8_t* tmpbuff = (uint8_t*)malloc(buffLen);
+    if(!tmpbuff) {log_e("out of memory"); return;}
+    char c;
+    char code0;
+    char code1;
+    uint16_t j = 0;
+    for(int i = 0; i < len; i++) {
+        c = buff[i];
+        if(isalnum(c)) tmpbuff[j++] = c;
+        else if(spacesOnly){
+            if(c == ' '){
+                tmpbuff[j++] = '%';
+                tmpbuff[j++] = '2';
+                tmpbuff[j++] = '0';
+            }
+            else{
+                tmpbuff[j++] = c;
+            }
+        }
+        else {
+            code1 = (c & 0xf) + '0';
+            if((c & 0xf) > 9) code1 = (c & 0xf) - 10 + 'A';
+            c = (c >> 4) & 0xf;
+            code0 = c + '0';
+            if(c > 9) code0 = c - 10 + 'A';
+            tmpbuff[j++] = '%';
+            tmpbuff[j++] = code0;
+            tmpbuff[j++] = code1;
+        }
+        if(j == buffLen - 1){
+            log_e("out of memory");
+            break;
+        }
+    }
+    memcpy(buff, tmpbuff, j);
+    buff[j] ='\0';
+    free(tmpbuff);
+}
+//---------------------------------------------------------------------------------------------------------------------
+void VS1053::control_mode_off()
+{
+    CS_HIGH();                                  // End control mode
+    SPIbus->endTransaction();                       // Allow other SPI users
+}
+void VS1053::control_mode_on()
+{
+    SPIbus->beginTransaction(VS1053_SPISettings);           // Prevent other SPI users
+    DCS_HIGH();                                 // Bring slave in control mode
+    CS_LOW();
+}
+void VS1053::data_mode_on()
+{
+    SPIbus->beginTransaction(VS1053_SPISettings);           // Prevent other SPI users
+    CS_HIGH();                                  // Bring slave in data mode
+    DCS_LOW();
+}
+void VS1053::data_mode_off()
+{
+    //digitalWrite(dcs_pin, HIGH);              // End data mode
+    DCS_HIGH();
+    SPIbus->endTransaction();                       // Allow other SPI users
+}
+//---------------------------------------------------------------------------------------------------------------------
+uint16_t VS1053::read_register(uint8_t _reg)
+{
+    uint16_t result=0;
+    control_mode_on();
+    SPIbus->write(3);                                           // Read operation
+    SPIbus->write(_reg);                                        // Register to write (0..0xF)
+    // Note: transfer16 does not seem to work
+    result=(SPIbus->transfer(0xFF) << 8) | (SPIbus->transfer(0xFF));  // Read 16 bits data
+    await_data_request();                                   // Wait for DREQ to be HIGH again
+    control_mode_off();
+    return result;
+}
+//---------------------------------------------------------------------------------------------------------------------
+void VS1053::write_register(uint8_t _reg, uint16_t _value)
+{
+    control_mode_on();
+    SPIbus->write(2);                                           // Write operation
+    SPIbus->write(_reg);                                        // Register to write (0..0xF)
+    SPIbus->write16(_value);                                    // Send 16 bits data
+    await_data_request();
+    control_mode_off();
+}
+//---------------------------------------------------------------------------------------------------------------------
+void VS1053::sdi_send_buffer(uint8_t* data, size_t len)
+{
+    size_t chunk_length;                                    // Length of chunk 32 byte or shorter
+
+    data_mode_on();
+    while(len){                                             // More to do?
+
+        await_data_request();                               // Wait for space available
+        chunk_length=len;
+        if(len > vs1053_chunk_size){
+            chunk_length=vs1053_chunk_size;
+        }
+        len-=chunk_length;
+        SPIbus->writeBytes(data, chunk_length);
+        data+=chunk_length;
+    }
+    data_mode_off();
+}
+//---------------------------------------------------------------------------------------------------------------------
+void VS1053::sdi_send_fillers(size_t len){
+
+    size_t chunk_length;                                    // Length of chunk 32 byte or shorter
+
+    data_mode_on();
+    while(len)                                              // More to do?
+    {
+        await_data_request();                               // Wait for space available
+        chunk_length=len;
+        if(len > vs1053_chunk_size){
+            chunk_length=vs1053_chunk_size;
+        }
+        len-=chunk_length;
+        while(chunk_length--){
+            SPIbus->write(m_endFillByte);
+        }
+    }
+    data_mode_off();
+}
+//---------------------------------------------------------------------------------------------------------------------
+void VS1053::wram_write(uint16_t address, uint16_t data){
+
+    write_register(SCI_WRAMADDR, address);
+    write_register(SCI_WRAM, data);
+}
+//---------------------------------------------------------------------------------------------------------------------
+uint16_t VS1053::wram_read(uint16_t address){
+
+    write_register(SCI_WRAMADDR, address);                  // Start reading from WRAM
+    return read_register(SCI_WRAM);                         // Read back result
+}
+//---------------------------------------------------------------------------------------------------------------------
 bool VS1053::readMetadata(uint8_t b, bool first) {
 
     static uint16_t pos_ml = 0;                          // determines the current position in metaline
@@ -1413,256 +2419,8 @@ bool VS1053::readMetadata(uint8_t b, bool first) {
     return false; // end_METADATA
 }
 //---------------------------------------------------------------------------------------------------------------------
-bool VS1053::parseContentType(const char* ct) {
-    bool ct_seen = false;
-    if(indexOf(ct, "audio", 0) >= 0) {        // Is ct audio?
-        ct_seen = true;                       // Yes, remember seeing this
-        if(indexOf(ct, "mpeg", 13) >= 0) {
-            m_codec = CODEC_MP3;
-            sprintf(chbuf, "%s, format is mp3", ct);
-            if(vs1053_info) vs1053_info(chbuf); //ok is likely mp3
-        }
-        else if(indexOf(ct, "mp3", 13) >= 0) {
-            m_codec = CODEC_MP3;
-            sprintf(chbuf, "%s, format is mp3", ct);
-            if(vs1053_info) vs1053_info(chbuf);
-        }
-        else if(indexOf(ct, "aac", 13) >= 0) {
-            m_codec = CODEC_AAC;
-            sprintf(chbuf, "%s, format is aac", ct);
-            if(vs1053_info) vs1053_info(chbuf);
-        }
-        else if(indexOf(ct, "mp4", 13) >= 0) {      // audio/mp4a, audio/mp4a-latm
-            m_codec = CODEC_M4A;
-            sprintf(chbuf, "%s, format is aac", ct);
-            if(vs1053_info) vs1053_info(chbuf);
-        }
-        else if(indexOf(ct, "m4a", 13) >= 0) {      // audio/x-m4a
-            m_codec = CODEC_M4A;
-            sprintf(chbuf, "%s, format is aac", ct);
-            if(vs1053_info) vs1053_info(chbuf);
-        }
-        else if(indexOf(ct, "wav", 13) >= 0) {      // audio/x-wav
-            m_codec = CODEC_WAV;
-            sprintf(chbuf, "%s, format is wav", ct);
-            if(vs1053_info) vs1053_info(chbuf);
-        }
-        else if(indexOf(ct, "ogg", 13) >= 0) {
-            m_codec = CODEC_OGG;
-            sprintf(chbuf, "ContentType %s found", ct);
-            if(vs1053_info) vs1053_info(chbuf);
-        }
-        else if(indexOf(ct, "flac", 13) >= 0) {     // audio/flac, audio/x-flac
-            m_codec = CODEC_FLAC;
-            sprintf(chbuf, "%s, format is flac", ct);
-            if(vs1053_info) vs1053_info(chbuf);
-        }
-        else {
-            m_f_running = false;
-            sprintf(chbuf, "%s, unsupported audio format", ct);
-            if(vs1053_info) vs1053_info(chbuf);
-        }
-    }
-    if(indexOf(ct, "application", 0) >= 0) {  // Is ct application?
-        ct_seen = true;                       // Yes, remember seeing this
-        uint8_t pos = indexOf(ct, "application", 0);
-        if(indexOf(ct, "ogg", 13) >= 0) {
-            m_codec = CODEC_OGG;
-            sprintf(chbuf, "ContentType %s found", ct + pos);
-            if(vs1053_info) vs1053_info(chbuf);
-        }
-    }
-    return ct_seen;
-}
-//---------------------------------------------------------------------------------------------------------------------
-void VS1053::stop_mp3client(){
-    int v=read_register(SCI_VOL);
-    audiofile.close();
-    m_f_localfile=false;
-    m_f_webstream=false;
-    write_register(SCI_VOL, 0);                         // Mute while stopping
-
-    client.flush();                                     // Flush stream client
-    client.stop();                                      // Stop stream client
-    write_register(SCI_VOL, v);
-}
-//---------------------------------------------------------------------------------------------------------------------
-void VS1053::setDefaults(){
-    // initializationsequence
-    stopSong();
-    initInBuff();                                           // initialize InputBuffer if not already done
-    InBuff.resetBuffer();
-    client.stop();
-    client.flush(); // release memory
-    clientsecure.stop();
-    clientsecure.flush();
-    m_f_ctseen=false;                                       // Contents type not seen yet
-    m_metaint=0;                                            // No metaint yet
-    m_LFcount=0;                                            // For detection end of header
-    m_bitrate=0;                                            // Bitrate still unknown
-    m_f_firstCall = true;                                   // InitSequence for processWebstream and processLokalFile
-    m_controlCounter = 0;
-    m_f_firstchunk=true;                                    // First chunk expected
-    m_f_chunked=false;                                      // Assume not chunked
-    m_f_ssl=false;
-    m_f_swm = true;
-    m_f_webfile = false;
-    m_f_webstream = false;
-    m_f_tts = false;                                        // text to speech
-    m_f_localfile = false;
-}
-//---------------------------------------------------------------------------------------------------------------------
-bool VS1053::connecttohost(String host){
-    return connecttohost(host.c_str());
-}
-//---------------------------------------------------------------------------------------------------------------------
-bool VS1053::connecttohost(const char* host, const char* user, const char* pwd) {
-    // user and pwd for authentification only, can be empty
-
-    if(strlen(host) == 0) {
-        if(vs1053_info) vs1053_info("Hostaddress is empty");
-        return false;
-    }
-    setDefaults();
-
-    log_d("free heap=%d", ESP.getFreeHeap());
-
-    sprintf(chbuf, "Connect to new host: \"%s\"", host);
-    if(vs1053_info) vs1053_info(chbuf);
-
-    // authentification
-    uint8_t auth = strlen(user) + strlen(pwd);
-    char toEncode[auth + 4];
-    toEncode[0] = '\0';
-    strcat(toEncode, user);
-    strcat(toEncode, ":");
-    strcat(toEncode, pwd);
-    char authorization[base64_encode_expected_len(strlen(toEncode)) + 1];
-    authorization[0] = '\0';
-    b64encode((const char*)toEncode, strlen(toEncode), authorization);
-
-    // initializationsequence
-    int16_t pos_slash;                                        // position of "/" in hostname
-    int16_t pos_colon;                                        // position of "/" in hostname
-    int16_t pos_ampersand;                                    // position of "&" in hostname
-    uint16_t port = 80;                                       // port number
-    m_f_webstream = true;
-    setDatamode(VS1053_HEADER);                                // Handle header
-
-    if(startsWith(host, "http://")) {
-        host = host + 7;
-        m_f_ssl = false;
-    }
-
-    if(startsWith(host, "https://")) {
-        host = host +8;
-        m_f_ssl = true;
-        port = 443;
-    }
-
-    // Is it a playlist?
-    if(endsWith(host, ".m3u")) {m_playlistFormat = FORMAT_M3U; m_datamode = VS1053_PLAYLISTINIT;}
-    if(endsWith(host, ".pls")) {m_playlistFormat = FORMAT_PLS; m_datamode = VS1053_PLAYLISTINIT;}
-    if(endsWith(host, ".asx")) {m_playlistFormat = FORMAT_ASX; m_datamode = VS1053_PLAYLISTINIT;}
-        // if url ...=asx   www.fantasyfoxradio.de/infusions/gr_radiostatus_panel/gr_radiostatus_player.php?id=2&p=asx
-    if(endsWith(host, "=asx")) {m_playlistFormat = FORMAT_ASX; m_datamode = VS1053_PLAYLISTINIT;}
-    if(endsWith(host, "=pls")) {m_playlistFormat = FORMAT_PLS; m_datamode = VS1053_PLAYLISTINIT;}
-
-     // In the URL there may be an extension, like noisefm.ru:8000/play.m3u&t=.m3u
-    pos_slash     = indexOf(host, "/", 0);
-    pos_colon     = indexOf(host, ":", 0);
-    pos_ampersand = indexOf(host, "&", 0);
-
-    char *hostwoext = NULL;                                  // "skonto.ls.lv:8002" in "skonto.ls.lv:8002/mp3"
-    char *extension = NULL;                                  // "/mp3" in "skonto.ls.lv:8002/mp3"
-
-    if(pos_slash > 1) {
-        uint8_t hostwoextLen = pos_slash;
-        hostwoext = (char*)malloc(hostwoextLen + 1);
-        memcpy(hostwoext, host, hostwoextLen);
-        hostwoext[hostwoextLen] = '\0';
-        uint8_t extLen =  urlencode_expected_len(host + pos_slash);
-        extension = (char *)malloc(extLen);
-        memcpy(extension, host  + pos_slash, extLen);
-        trim(extension);
-        urlencode(extension, extLen, true);
-    }
-    else{  // url has no extension
-        hostwoext = strdup(host);
-        extension = strdup("/");
-    }
-
-    if((pos_colon >= 0) && ((pos_ampersand == -1) or (pos_ampersand > pos_colon))){
-        port = atoi(host+ pos_colon + 1);// Get portnumber as integer
-        hostwoext[pos_colon] = '\0';// Host without portnumber
-    }
-
-    sprintf(chbuf, "Connect to \"%s\" on port %d, extension \"%s\"", hostwoext, port, extension);
-    if(vs1053_info) vs1053_info(chbuf);
-
-    char resp[strlen(host) + strlen(authorization) + 100];
-    resp[0] = '\0';
-
-    strcat(resp, "GET ");
-    strcat(resp, extension);
-    strcat(resp, " HTTP/1.1\r\n");
-    strcat(resp, "Host: ");
-    strcat(resp, hostwoext);
-    strcat(resp, "\r\n");
-    strcat(resp, "Icy-MetaData:1\r\n");
-    strcat(resp, "Authorization: Basic ");
-    strcat(resp, authorization);
-    strcat(resp, "\r\n");
-    strcat(resp, "Connection: keep-alive\r\n\r\n");
-
-    const uint32_t TIMEOUT_MS{250};
-    if(m_f_ssl == false) {
-        uint32_t t = millis();
-        if(client.connect(hostwoext, port, TIMEOUT_MS)) {
-            // client.setNoDelay(true);
-            client.print(resp);
-            uint32_t dt = millis() - t;
-            sprintf(chbuf, "Connected to server in %u ms", dt);
-            if(vs1053_info) vs1053_info(chbuf);
-            memcpy(m_lastHost, host, strlen(host) + 1);               // Remember the current s_host
-            trim(m_lastHost);
-            m_f_running = true;
-            if(hostwoext) free(hostwoext);
-            if(extension) free(extension);
-            while(!client.connected()){;} // wait until the connection is established
-            return true;
-        }
-    }
-
-    const uint32_t TIMEOUT_MS_SSL{2700};
-    if(m_f_ssl == true) {
-        uint32_t t = millis();
-        if(clientsecure.connect(hostwoext, port, TIMEOUT_MS_SSL)) {
-            // clientsecure.setNoDelay(true);
-            // if(vs1053_info) vs1053_info("SSL/TLS Connected to server");
-            clientsecure.print(resp);
-            uint32_t dt = millis() - t;
-            sprintf(chbuf, "SSL has been established in %u ms, free Heap: %u bytes", dt, ESP.getFreeHeap());
-            if(vs1053_info) vs1053_info(chbuf);
-            memcpy(m_lastHost, "https://", 8);
-            memcpy(m_lastHost + 8, host, strlen(host) + 1);    // Remember the current s_host
-            m_f_running = true;
-            if(hostwoext) free(hostwoext);
-            if(extension) free(extension);
-            while(!clientsecure.connected()){;}
-            return true;
-        }
-    }
-    sprintf(chbuf, "Request %s failed!", host);
-    if(vs1053_info) vs1053_info(chbuf);
-    if(vs1053_showstation) vs1053_showstation("");
-    if(vs1053_showstreamtitle) vs1053_showstreamtitle("");
-    if(vs1053_icydescription) vs1053_icydescription("");
-    if(vs1053_icyurl) vs1053_icyurl("");
-    m_lastHost[0] = 0;
-    if(hostwoext) free(hostwoext);
-    if(extension) free(extension);
-    return false;
+bool VS1053::doNotJumpSet() {
+    return (wram_read(SCI_STATUS) >> 15) & 0x01;
 }
 //---------------------------------------------------------------------------------------------------------------------
 void VS1053::loadUserCode(void) {
@@ -1687,654 +2445,38 @@ void VS1053::loadUserCode(void) {
   }
 }
 //---------------------------------------------------------------------------------------------------------------------
-void VS1053::UTF8toASCII(char* str){
+void VS1053::compute_bitrate() {
+    static uint16_t loop_counter = 0;
+    static uint32_t old_bitrate = 0;
+    static uint32_t actual_bitrate = 0;
+    static uint64_t sum_bitrate = 0;
+    static boolean f_CBR = true; // constant bitrate
 
-    const uint8_t ascii[60] = {
-    //129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148  // UTF8(C3)
-    //                Ä    Å    Æ    Ç         É                                       Ñ                  // CHAR
-      000, 000, 000, 142, 143, 146, 128, 000, 144, 000, 000, 000, 000, 000, 000, 000, 165, 000, 000, 000, // ASCII
-    //149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168
-    //      Ö                             Ü              ß    à                   ä    å    æ         è
-      000, 153, 000, 000, 000, 000, 000, 154, 000, 000, 225, 133, 000, 000, 000, 132, 134, 145, 000, 138,
-    //169, 170, 171, 172. 173. 174. 175, 176, 177, 179, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188
-    //      ê    ë    ì         î    ï         ñ    ò         ô         ö              ù         û    ü
-      000, 136, 137, 141, 000, 140, 139, 000, 164, 149, 000, 147, 000, 148, 000, 000, 151, 000, 150, 129};
-
-    uint16_t i = 0, j=0, s = 0;
-    bool f_C3_seen = false;
-
-    while(str[i] != 0) {                                     // convert UTF8 to ASCII
-        if(str[i] == 195){                                   // C3
-            i++;
-            f_C3_seen = true;
-            continue;
-        }
-        str[j] = str[i];
-        if(str[j] > 128 && str[j] < 189 && f_C3_seen == true) {
-            s = ascii[str[j] - 129];
-            if(s != 0) str[j] = s;                         // found a related ASCII sign
-            f_C3_seen = false;
-        }
-        i++; j++;
-    }
-    str[j] = 0;
-}
-//---------------------------------------------------------------------------------------------------------------------
-bool VS1053::connecttoSD(String sdfile){
-    return connecttoFS(FileSystem, sdfile.c_str());
-}
-
-bool VS1053::connecttoSD(const char* sdfile){
-    return connecttoFS(FileSystem, sdfile);
-}
-
-bool VS1053::connecttoFS(fs::FS *fs, const char* path) {
-
-    if(strlen(path)>255) return false;
-
-    char audioName[256];
-
-    setDefaults(); // free buffers an set defaults
-
-    memcpy(audioName, path, strlen(path)+1);
-    if(audioName[0] != '/'){
-        for(int i = 255; i > 0; i--){
-            audioName[i] = audioName[i-1];
-        }
-        audioName[0] = '/';
-    }
-    if(endsWith(audioName, "\n")) audioName[strlen(audioName) -1] = 0;
-
-    sprintf(chbuf, "Reading file: \"%s\"", audioName);
-    if(vs1053_info) {vTaskDelay(2); vs1053_info(chbuf);}
-
-    if(fs->exists(audioName)) {
-        audiofile = fs->open(audioName);
-    } else {
-        UTF8toASCII(audioName);
-        if(fs->exists(audioName)) {
-            audiofile = fs->open(audioName);
-        }
+    if(m_avr_bitrate == 0){
+        loop_counter = 0;
+        old_bitrate = 0;
+        sum_bitrate = 0;
+        f_CBR = true;  
+        m_avr_bitrate = getBitRate();
+        actual_bitrate = m_avr_bitrate; 
+        return;         
     }
 
-    if(!audiofile) {
-        if(vs1053_info) {vTaskDelay(2); vs1053_info("Failed to open file for reading");}
-        return false;
+    if(loop_counter < 5) loop_counter ++;
+
+    old_bitrate = actual_bitrate;
+    actual_bitrate = getBitRate();
+    if((old_bitrate > actual_bitrate - 16 && old_bitrate < actual_bitrate + 16) && f_CBR) {
+        if(vs1053_info) vs1053_info("VBR recognized, audioFileDuration is estimated");
+        sum_bitrate = old_bitrate;
+        f_CBR = false; // variable bitrate
     }
 
-    m_f_localfile = true;
-    m_file_size = audiofile.size();//TEST loop
-
-    char* afn = strdup(audiofile.name());                   // audioFileName
-    uint8_t dotPos = lastIndexOf(afn, ".");
-    for(uint8_t i = dotPos + 1; i < strlen(afn); i++){
-        afn[i] = toLowerCase(afn[i]);
-    }
-
-    if(endsWith(afn, ".mp3")){      // MP3 section
-        m_codec = CODEC_MP3;
-        m_f_running = true;
-        return true;
-    } // end MP3 section
-
-    if(endsWith(afn, ".m4a")){      // M4A section, iTunes
-        m_codec = CODEC_M4A;
-        m_f_running = true;
-        return true;
-    } // end M4A section
-
-    if(endsWith(afn, ".aac")){      // AAC section, without FileHeader
-        m_codec = CODEC_AAC;
-        m_f_running = true;
-        return true;
-    } // end AAC section
-
-    if(endsWith(afn, ".wav")){      // WAVE section
-        m_codec = CODEC_WAV;
-        m_f_running = true;
-        return true;
-    } // end WAVE section
-
-    if(endsWith(afn, ".flac")) {     // FLAC section
-        m_codec = CODEC_FLAC;
-        m_f_running = true;
-        return true;
-    } // end FLAC section
-
-    if(endsWith(afn, ".ogg")) {     // FLAC section
-        m_codec = CODEC_OGG;
-        m_f_running = true;
-        return true;
-    } // end FLAC section
-
-    sprintf(chbuf, "The %s format is not supported", afn + dotPos);
-    if(vs1053_info) vs1053_info(chbuf);
-    audiofile.close();
-    if(afn) free(afn);
-    return false;
-}
-//---------------------------------------------------------------------------------------------------------------------
-bool VS1053::connecttospeech(const char* speech, const char* lang){
-
-    setDefaults();
-    char host[] = "translate.google.com.vn";
-    char path[] = "/translate_tts";
-
-    uint16_t speechLen = strlen(speech);
-    uint16_t speechBuffLen = speechLen + 300;
-    memcpy(m_lastHost, speech, 256);
-    char* speechBuff = (char*)malloc(speechBuffLen);
-    if(!speechBuff) {log_e("out of memory"); return false;}
-    memcpy(speechBuff, speech, speechLen);
-    speechBuff[speechLen] = '\0';
-    urlencode(speechBuff, speechBuffLen);
-
-    char resp[strlen(speechBuff) + 200] = "";
-    strcat(resp, "GET ");
-    strcat(resp, path);
-    strcat(resp, "?ie=UTF-8&tl=");
-    strcat(resp, lang);
-    strcat(resp, "&client=tw-ob&q=");
-    strcat(resp, speechBuff);
-    strcat(resp, " HTTP/1.1\r\n");
-    strcat(resp, "Host: ");
-    strcat(resp, host);
-    strcat(resp, "\r\n");
-    strcat(resp, "User-Agent: Mozilla/5.0 \r\n");
-    strcat(resp, "Accept-Encoding: identity\r\n");
-    strcat(resp, "Accept: text/html\r\n");
-    strcat(resp, "Connection: close\r\n\r\n");
-
-    free(speechBuff);
-
-    if(!clientsecure.connect(host, 443)) {
-        log_e("Connection failed");
-        return false;
-    }
-    clientsecure.print(resp);
-    sprintf(chbuf, "SSL has been established, free Heap: %u bytes", ESP.getFreeHeap());
-    if(vs1053_info) vs1053_info(chbuf);
-
-    m_f_webstream = true;
-    m_f_running = true;
-    m_f_ssl = true;
-    m_f_tts = true;
-    setDatamode(VS1053_HEADER);
-
-    return true;
-}
-//---------------------------------------------------------------------------------------------------------------------
-void VS1053::unicode2utf8(char* buff, uint32_t len){
-    // converts unicode in UTF-8, buff contains the string to be converted up to len
-    // range U+1 ... U+FFFF
-    uint8_t* tmpbuff = (uint8_t*)malloc(len * 2);
-    if(!tmpbuff) {log_e("out of memory"); return;}
-    bool bitorder = false;
-    uint16_t j = 0;
-    uint16_t k = 0;
-    uint16_t m = 0;
-    uint8_t uni_h = 0;
-    uint8_t uni_l = 0;
-
-    while(m < len - 1) {
-        if((buff[m] == 0xFE) && (buff[m + 1] == 0xFF)) {
-            bitorder = true;
-            j = m + 2;
-        }  // LSB/MSB
-        if((buff[m] == 0xFF) && (buff[m + 1] == 0xFE)) {
-            bitorder = false;
-            j = m + 2;
-        }  // MSB/LSB
-        m++;
-    } // seek for last bitorder
-    m = 0;
-    if(j > 0) {
-        for(k = j; k < len; k += 2) {
-            if(bitorder == true) {
-                uni_h = (uint8_t)buff[k];
-                uni_l = (uint8_t)buff[k + 1];
-            }
-            else {
-                uni_l = (uint8_t)buff[k];
-                uni_h = (uint8_t)buff[k + 1];
-            }
-
-            uint16_t uni_hl = ((uni_h << 8) | uni_l);
-
-            if (uni_hl < 0X80){
-                tmpbuff[m] = uni_l;
-                m++;
-            }
-            else if (uni_hl < 0X800) {
-                tmpbuff[m]= ((uni_hl >> 6) | 0XC0);
-                m++;
-                tmpbuff[m] =((uni_hl & 0X3F) | 0X80);
-                m++;
-            }
-            else {
-                tmpbuff[m] = ((uni_hl >> 12) | 0XE0);
-                m++;
-                tmpbuff[m] = (((uni_hl >> 6) & 0X3F) | 0X80);
-                m++;
-                tmpbuff[m] = ((uni_hl & 0X3F) | 0X80);
-                m++;
-            }
+    if(!f_CBR) {
+        if(loop_counter < 5) {
+            // if VBR: m_avr_bitrate is average of the first values of m_bitrate
+            sum_bitrate += actual_bitrate;
+            m_avr_bitrate = sum_bitrate / (loop_counter + 1);
         }
     }
-    buff[m] = 0;
-    memcpy(buff, tmpbuff, m);
-    free(tmpbuff);
-}
-//---------------------------------------------------------------------------------------------------------------------
-int VS1053::read_MP3_Header(uint8_t *data, size_t len) {
-
-    static size_t headerSize;
-    static size_t id3Size;
-    static uint8_t ID3version;
-    static int ehsz = 0;
-    static char frameid[5];
-    static size_t framesize = 0;
-    static bool compressed = false;
-    static bool APIC_seen = false;
-    static size_t APIC_size = 0;
-    static uint32_t APIC_pos = 0;
-    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-    if(m_controlCounter == 0){      /* read ID3 tag and ID3 header size */
-        if(m_f_localfile){
-            m_contentlength = getFileSize();
-            ID3version = 0;
-            sprintf(chbuf, "Content-Length: %u", m_contentlength);
-            if(vs1053_info) vs1053_info(chbuf);
-        }
-        m_controlCounter ++;
-        APIC_seen = false;
-        headerSize = 0;
-        ehsz = 0;
-        if(specialIndexOf(data, "ID3", 4) != 0) { // ID3 not found
-            if(vs1053_info) vs1053_info("file has no mp3 tag, skip metadata");
-            m_audioDataSize = m_contentlength;
-            sprintf(chbuf, "Audio-Length: %u", m_audioDataSize);
-            if(vs1053_info) vs1053_info(chbuf);
-            return -1; // error, no ID3 signature found
-        }
-        ID3version = *(data + 3);
-        switch(ID3version){
-            case 2:
-                m_f_unsync = (*(data + 5) & 0x80);
-                m_f_exthdr = false;
-                break;
-            case 3:
-            case 4:
-                m_f_unsync = (*(data + 5) & 0x80); // bit7
-                m_f_exthdr = (*(data + 5) & 0x40); // bit6 extended header
-                break;
-        };
-        id3Size = bigEndian(data + 6, 4, 7); //  ID3v2 size  4 * %0xxxxxxx (shift left seven times!!)
-        id3Size += 10;
-
-        // Every read from now may be unsync'd
-        sprintf(chbuf, "ID3 framesSize: %i", id3Size);
-        if(vs1053_info) vs1053_info(chbuf);
-
-        sprintf(chbuf, "ID3 version: 2.%i", ID3version);
-        if(vs1053_info) vs1053_info(chbuf);
-
-        if(ID3version == 2){
-            m_controlCounter = 10;
-        }
-        headerSize = id3Size;
-        headerSize -= 10;
-
-        return 10;
-    }
-    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-    if(m_controlCounter == 1){      // compute extended header size if exists
-        m_controlCounter ++;
-        if(m_f_exthdr) {
-            if(vs1053_info) vs1053_info("ID3 extended header");
-            ehsz =  bigEndian(data, 4);
-            headerSize -= 4;
-            ehsz -= 4;
-            return 4;
-        }
-        else{
-            if(vs1053_info) vs1053_info("ID3 normal frames");
-            return 0;
-        }
-    }
-    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-    if(m_controlCounter == 2){      // skip extended header if exists
-        if(ehsz > 256) {
-            ehsz -=256;
-            headerSize -= 256;
-            return 256;} // Throw it away
-        else           {
-            m_controlCounter ++;
-            headerSize -= ehsz;
-            return ehsz;} // Throw it away
-    }
-    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-    if(m_controlCounter == 3){      // read a ID3 frame, get the tag
-        if(headerSize == 0){
-            m_controlCounter = 99;
-            return 0;
-        }
-        m_controlCounter ++;
-        frameid[0] = *(data + 0);
-        frameid[1] = *(data + 1);
-        frameid[2] = *(data + 2);
-        frameid[3] = *(data + 3);
-        frameid[4] = 0;
-        headerSize -= 4;
-        if(frameid[0] == 0 && frameid[1] == 0 && frameid[2] == 0 && frameid[3] == 0) {
-            // We're in padding
-            m_controlCounter = 98;  // all ID3 metadata processed
-        }
-        return 4;
-    }
-    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-    if(m_controlCounter == 4){  // get the frame size
-        m_controlCounter = 6;
-
-        if(ID3version == 4){
-            framesize = bigEndian(data, 4, 7); // << 7
-        }
-        else {
-            framesize = bigEndian(data, 4);  // << 8
-        }
-        headerSize -= 4;
-        uint8_t flag = *(data + 4); // skip 1st flag
-        (void) flag;
-        headerSize--;
-        compressed = (*(data + 5)) & 0x80; // Frame is compressed using [#ZLIB zlib] with 4 bytes for 'decompressed
-                                           // size' appended to the frame header.
-        headerSize--;
-        uint32_t decompsize = 0;
-        if(compressed){
-            log_d("iscompressed");
-            decompsize = bigEndian(data + 6, 4);
-            headerSize -= 4;
-            (void) decompsize;
-            log_d("decompsize=%u", decompsize);
-            return 6 + 4;
-        }
-        return 6;
-    }
-    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-    if(m_controlCounter == 5){      // If the frame is larger than 256 bytes, skip the rest
-        if(framesize > 256){
-            framesize -= 256;
-            headerSize -= 256;
-            return 256;
-        }
-        else {
-            m_controlCounter = 3; // check next frame
-            headerSize -= framesize;
-            return framesize;
-        }
-    }
-    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-    if(m_controlCounter == 6){      // Read the value
-        m_controlCounter = 5;       // only read 256 bytes
-        char value[256];
-        char ch = *(data + 0);
-        bool isUnicode = (ch==1) ? true : false;
-
-        if(startsWith(frameid, "APIC")) { // a image embedded in file, passing it to external function
-            // log_d("framesize=%i", framesize);
-            isUnicode = false;
-            if(m_f_localfile){
-                APIC_seen = true;
-                APIC_pos = id3Size - headerSize;
-                APIC_size = framesize;
-            }
-            return 0;
-        }
-
-        size_t fs = framesize;
-        if(fs >255) fs = 255;
-        for(int i=0; i<fs; i++){
-            value[i] = *(data + i);
-        }
-        framesize -= fs;
-        headerSize -= fs;
-        value[fs] = 0;
-        if(isUnicode && fs > 1) {
-            unicode2utf8(value, fs);   // convert unicode to utf-8 U+0020...U+07FF
-        }
-        if(!isUnicode){
-            uint16_t j = 0, k = 0;
-            j = 0;
-            k = 0;
-            while(j < fs) {
-                if(value[j] == 0x0A) value[j] = 0x20; // replace LF by space
-                if(value[j] > 0x1F) {
-                    value[k] = value[j];
-                    k++;
-                }
-                j++;
-            } //remove non printables
-            if(k>0) value[k] = 0; else value[0] = 0; // new termination
-        }
-        showID3Tag(frameid, value);
-        return fs;
-    }
-    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-
-    // -- section V2.2 only , greater Vers above ----
-    if(m_controlCounter == 10){ // frames in V2.2, 3bytes identifier, 3bytes size descriptor
-        frameid[0] = *(data + 0);
-        frameid[1] = *(data + 1);
-        frameid[2] = *(data + 2);
-        frameid[3] = 0;
-        headerSize -= 3;
-        size_t len = bigEndian(data + 3, 3);
-        headerSize -= 3;
-        headerSize -= len;
-        char value[256];
-        size_t tmp = len;
-        if(tmp > 254) tmp = 254;
-        memcpy(value, (data + 7), tmp);
-        value[tmp+1] = 0;
-        chbuf[0] = 0;
-
-        showID3Tag(frameid, value);
-        if(len == 0) m_controlCounter = 98;
-
-        return 3 + 3 + len;
-    }
-    // -- end section V2.2 -----------
-
-    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-    if(m_controlCounter == 98){ // skip all ID3 metadata (mostly spaces)
-        if(headerSize > 256) {
-            headerSize -=256;
-            return 256;
-        } // Throw it away
-        else           {
-            m_controlCounter = 99;
-            return headerSize;
-        } // Throw it away
-    }
-    // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-    if(m_controlCounter == 99){ //  exist another ID3tag?
-        m_audioDataStart += id3Size;
-        vTaskDelay(30);
-        if((*(data + 0) == 'I') && (*(data + 1) == 'D') && (*(data + 2) == '3')) {
-            m_controlCounter = 0;
-            return 0;
-        }
-        else {
-            m_controlCounter = 100; // ok
-            m_audioDataSize = m_contentlength - m_audioDataStart;
-            sprintf(chbuf, "Audio-Length: %u", m_audioDataSize);
-            if(vs1053_info) vs1053_info(chbuf);
-            if(APIC_seen && vs1053_id3image) vs1053_id3image(audiofile, APIC_pos, APIC_size);
-            return 0;
-        }
-    }
-    return 0;
-}
-//---------------------------------------------------------------------------------------------------------------------
-void VS1053::showID3Tag(const char* tag, const char* value){
-
-    chbuf[0] = 0;
-    // V2.2
-    if(!strcmp(tag, "CNT")) sprintf(chbuf, "Play counter: %s", value);
-    // if(!strcmp(tag, "COM")) sprintf(chbuf, "Comments: %s", value);
-    if(!strcmp(tag, "CRA")) sprintf(chbuf, "Audio encryption: %s", value);
-    if(!strcmp(tag, "CRM")) sprintf(chbuf, "Encrypted meta frame: %s", value);
-    if(!strcmp(tag, "ETC")) sprintf(chbuf, "Event timing codes: %s", value);
-    if(!strcmp(tag, "EQU")) sprintf(chbuf, "Equalization: %s", value);
-    if(!strcmp(tag, "IPL")) sprintf(chbuf, "Involved people list: %s", value);
-    if(!strcmp(tag, "PIC")) sprintf(chbuf, "Attached picture: %s", value);
-    if(!strcmp(tag, "SLT")) sprintf(chbuf, "Synchronized lyric/text: %s", value);
-    // if(!strcmp(tag, "TAL")) sprintf(chbuf, "Album/Movie/Show title: %s", value);
-    if(!strcmp(tag, "TBP")) sprintf(chbuf, "BPM (Beats Per Minute): %s", value);
-    if(!strcmp(tag, "TCM")) sprintf(chbuf, "Composer: %s", value);
-    if(!strcmp(tag, "TCO")) sprintf(chbuf, "Content type: %s", value);
-    if(!strcmp(tag, "TCR")) sprintf(chbuf, "Copyright message: %s", value);
-    if(!strcmp(tag, "TDA")) sprintf(chbuf, "Date: %s", value);
-    if(!strcmp(tag, "TDY")) sprintf(chbuf, "Playlist delay: %s", value);
-    if(!strcmp(tag, "TEN")) sprintf(chbuf, "Encoded by: %s", value);
-    if(!strcmp(tag, "TFT")) sprintf(chbuf, "File type: %s", value);
-    if(!strcmp(tag, "TIM")) sprintf(chbuf, "Time: %s", value);
-    if(!strcmp(tag, "TKE")) sprintf(chbuf, "Initial key: %s", value);
-    if(!strcmp(tag, "TLA")) sprintf(chbuf, "Language(s): %s", value);
-    if(!strcmp(tag, "TLE")) sprintf(chbuf, "Length: %s", value);
-    if(!strcmp(tag, "TMT")) sprintf(chbuf, "Media type: %s", value);
-    if(!strcmp(tag, "TOA")) sprintf(chbuf, "Original artist(s)/performer(s): %s", value);
-    if(!strcmp(tag, "TOF")) sprintf(chbuf, "Original filename: %s", value);
-    if(!strcmp(tag, "TOL")) sprintf(chbuf, "Original Lyricist(s)/text writer(s): %s", value);
-    if(!strcmp(tag, "TOR")) sprintf(chbuf, "Original release year: %s", value);
-    if(!strcmp(tag, "TOT")) sprintf(chbuf, "Original album/Movie/Show title: %s", value);
-    if(!strcmp(tag, "TP1")) sprintf(chbuf, "Lead artist(s)/Lead performer(s)/Soloist(s)/Performing group: %s", value);
-    if(!strcmp(tag, "TP2")) sprintf(chbuf, "Band/Orchestra/Accompaniment: %s", value);
-    if(!strcmp(tag, "TP3")) sprintf(chbuf, "Conductor/Performer refinement: %s", value);
-    if(!strcmp(tag, "TP4")) sprintf(chbuf, "Interpreted, remixed, or otherwise modified by: %s", value);
-    if(!strcmp(tag, "TPA")) sprintf(chbuf, "Part of a set: %s", value);
-    if(!strcmp(tag, "TPB")) sprintf(chbuf, "Publisher: %s", value);
-    if(!strcmp(tag, "TRC")) sprintf(chbuf, "ISRC (International Standard Recording Code): %s", value);
-    if(!strcmp(tag, "TRD")) sprintf(chbuf, "Recording dates: %s", value);
-    if(!strcmp(tag, "TRK")) sprintf(chbuf, "Track number/Position in set: %s", value);
-    if(!strcmp(tag, "TSI")) sprintf(chbuf, "Size: %s", value);
-    if(!strcmp(tag, "TSS")) sprintf(chbuf, "Software/hardware and settings used for encoding: %s", value);
-    if(!strcmp(tag, "TT1")) sprintf(chbuf, "Content group description: %s", value);
-    if(!strcmp(tag, "TT2")) sprintf(chbuf, "Title/Songname/Content description: %s", value);
-    if(!strcmp(tag, "TT3")) sprintf(chbuf, "Subtitle/Description refinement: %s", value);
-    if(!strcmp(tag, "TXT")) sprintf(chbuf, "Lyricist/text writer: %s", value);
-    if(!strcmp(tag, "TXX")) sprintf(chbuf, "User defined text information frame: %s", value);
-    if(!strcmp(tag, "TYE")) sprintf(chbuf, "Year: %s", value);
-    if(!strcmp(tag, "UFI")) sprintf(chbuf, "Unique file identifier: %s", value);
-    if(!strcmp(tag, "ULT")) sprintf(chbuf, "Unsychronized lyric/text transcription: %s", value);
-    if(!strcmp(tag, "WAF")) sprintf(chbuf, "Official audio file webpage: %s", value);
-    if(!strcmp(tag, "WAR")) sprintf(chbuf, "Official artist/performer webpage: %s", value);
-    if(!strcmp(tag, "WAS")) sprintf(chbuf, "Official audio source webpage: %s", value);
-    if(!strcmp(tag, "WCM")) sprintf(chbuf, "Commercial information: %s", value);
-    if(!strcmp(tag, "WCP")) sprintf(chbuf, "Copyright/Legal information: %s", value);
-    if(!strcmp(tag, "WPB")) sprintf(chbuf, "Publishers official webpage: %s", value);
-    if(!strcmp(tag, "WXX")) sprintf(chbuf, "User defined URL link frame: %s", value);
-
-    // V2.3 V2.4 tags
-    // if(!strcmp(tag, "COMM")) sprintf(chbuf, "Comment: %s", value);
-    if(!strcmp(tag, "OWNE")) sprintf(chbuf, "Ownership: %s", value);
-    // if(!strcmp(tag, "PRIV")) sprintf(chbuf, "Private: %s", value);
-    if(!strcmp(tag, "SYLT")) sprintf(chbuf, "SynLyrics: %s", value);
-    if(!strcmp(tag, "TALB")) sprintf(chbuf, "Album: %s", value);
-    if(!strcmp(tag, "TBPM")) sprintf(chbuf, "BeatsPerMinute: %s", value);
-    if(!strcmp(tag, "TCMP")) sprintf(chbuf, "Compilation: %s", value);
-    if(!strcmp(tag, "TCOM")) sprintf(chbuf, "Composer: %s", value);
-    if(!strcmp(tag, "TCON")) sprintf(chbuf, "ContentType: %s", value);
-    if(!strcmp(tag, "TCOP")) sprintf(chbuf, "Copyright: %s", value);
-    if(!strcmp(tag, "TDAT")) sprintf(chbuf, "Date: %s", value);
-    if(!strcmp(tag, "TEXT")) sprintf(chbuf, "Lyricist: %s", value);
-    if(!strcmp(tag, "TIME")) sprintf(chbuf, "Time: %s", value);
-    if(!strcmp(tag, "TIT1")) sprintf(chbuf, "Grouping: %s", value);
-    if(!strcmp(tag, "TIT2")) sprintf(chbuf, "Title: %s", value);
-    if(!strcmp(tag, "TIT3")) sprintf(chbuf, "Subtitle: %s", value);
-    if(!strcmp(tag, "TLAN")) sprintf(chbuf, "Language: %s", value);
-    if(!strcmp(tag, "TLEN")) sprintf(chbuf, "Length (ms): %s", value);
-    if(!strcmp(tag, "TMED")) sprintf(chbuf, "Media: %s", value);
-    if(!strcmp(tag, "TOAL")) sprintf(chbuf, "OriginalAlbum: %s", value);
-    if(!strcmp(tag, "TOPE")) sprintf(chbuf, "OriginalArtist: %s", value);
-    if(!strcmp(tag, "TORY")) sprintf(chbuf, "OriginalReleaseYear: %s", value);
-    if(!strcmp(tag, "TPE1")) sprintf(chbuf, "Artist: %s", value);
-    if(!strcmp(tag, "TPE2")) sprintf(chbuf, "Band: %s", value);
-    if(!strcmp(tag, "TPE3")) sprintf(chbuf, "Conductor: %s", value);
-    if(!strcmp(tag, "TPE4")) sprintf(chbuf, "InterpretedBy: %s", value);
-    if(!strcmp(tag, "TPOS")) sprintf(chbuf, "PartOfSet: %s", value);
-    if(!strcmp(tag, "TPUB")) sprintf(chbuf, "Publisher: %s", value);
-    if(!strcmp(tag, "TRCK")) sprintf(chbuf, "Track: %s", value);
-    if(!strcmp(tag, "TSSE")) sprintf(chbuf, "SettingsForEncoding: %s", value);
-    if(!strcmp(tag, "TRDA")) sprintf(chbuf, "RecordingDates: %s", value);
-    if(!strcmp(tag, "TXXX")) sprintf(chbuf, "UserDefinedText: %s", value);
-    if(!strcmp(tag, "TYER")) sprintf(chbuf, "Year: %s", value);
-    if(!strcmp(tag, "USER")) sprintf(chbuf, "TermsOfUse: %s", value);
-    if(!strcmp(tag, "USLT")) sprintf(chbuf, "Lyrics: %s", value);
-    if(!strcmp(tag, "WOAR")) sprintf(chbuf, "OfficialArtistWebpage: %s", value);
-    if(!strcmp(tag, "XDOR")) sprintf(chbuf, "OriginalReleaseTime: %s", value);
-
-    latinToUTF8(chbuf, sizeof(chbuf));
-    if(chbuf[0] != 0) if(vs1053_id3data) vs1053_id3data(chbuf);
-}
-//---------------------------------------------------------------------------------------------------------------------
-uint32_t VS1053::getFileSize(){
-    if (!audiofile) return 0;
-    return audiofile.size();
-}
-//---------------------------------------------------------------------------------------------------------------------
-uint32_t VS1053::getFilePos(){
-    if (!audiofile) return 0;
-    return audiofile.position();
-}
-//---------------------------------------------------------------------------------------------------------------------
-bool VS1053::setFilePos(uint32_t pos){
-    if (!audiofile) return false;
-    return audiofile.seek(pos);
-}
-//---------------------------------------------------------------------------------------------------------------------
-uint32_t VS1053::getAudioDataStartPos() {
-    if(!audiofile) return 0;
-    return m_audioDataStart;
-}
-//---------------------------------------------------------------------------------------------------------------------
-void VS1053::urlencode(char* buff, uint16_t buffLen, bool spacesOnly){
-    uint16_t len = strlen(buff);
-    uint8_t* tmpbuff = (uint8_t*)malloc(buffLen);
-    if(!tmpbuff) {log_e("out of memory"); return;}
-    char c;
-    char code0;
-    char code1;
-    uint16_t j = 0;
-    for(int i = 0; i < len; i++) {
-        c = buff[i];
-        if(isalnum(c)) tmpbuff[j++] = c;
-        else if(spacesOnly){
-            if(c == ' '){
-                tmpbuff[j++] = '%';
-                tmpbuff[j++] = '2';
-                tmpbuff[j++] = '0';
-            }
-            else{
-                tmpbuff[j++] = c;
-            }
-        }
-        else {
-            code1 = (c & 0xf) + '0';
-            if((c & 0xf) > 9) code1 = (c & 0xf) - 10 + 'A';
-            c = (c >> 4) & 0xf;
-            code0 = c + '0';
-            if(c > 9) code0 = c - 10 + 'A';
-            tmpbuff[j++] = '%';
-            tmpbuff[j++] = code0;
-            tmpbuff[j++] = code1;
-        }
-        if(j == buffLen - 1){
-            log_e("out of memory");
-            break;
-        }
-    }
-    memcpy(buff, tmpbuff, j);
-    buff[j] ='\0';
-    free(tmpbuff);
 }
